@@ -1,0 +1,17 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+# Local runtime state
+.runtime/
+.playwright/
+
+# Runtime artifacts
+token
+daemon.pid
+daemon.log

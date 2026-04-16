@@ -1,0 +1,72 @@
+{
+  "ok": true,
+  "kind": "health",
+  "source": "toss_browser_bridge",
+  "checked_at": "2026-04-17T02:01:30+09:00",
+  "capability": "attached_but_logged_out",
+  "data": {
+    "attached": true,
+    "current_url": "https://www.tossinvest.com/signin?redirectUrl=%2Faccount",
+    "profile_name": "toss-bridge",
+    "capabilities": {
+      "browser_attached": true,
+      "web_session_ready": false,
+      "wts_api_ready": false,
+      "wts_cert_api_ready": false,
+      "account_summary_ready": false,
+      "positions_ready": false,
+      "completed_orders_ready": false,
+      "quote_ready": true
+    },
+    "session_state": "attached_but_logged_out"
+  },
+  "diagnostics": {
+    "endpoint_matrix": [
+      {
+        "name": "account_list",
+        "method": "GET",
+        "path": "/api/v1/account/list",
+        "status_code": 401,
+        "ok": false,
+        "error": null
+      },
+      {
+        "name": "account_overview",
+        "method": "GET",
+        "path": "/api/v3/my-assets/summaries/markets/all/overview",
+        "status_code": 401,
+        "ok": false,
+        "error": null
+      },
+      {
+        "name": "asset_sections_v2",
+        "method": "POST",
+        "path": "/api/v2/dashboard/asset/sections/all",
+        "status_code": 200,
+        "ok": true,
+        "error": null
+      },
+      {
+        "name": "completed_orders_us_probe",
+        "method": "GET",
+        "path": "/api/v2/trading/my-orders/markets/us/by-date/completed",
+        "status_code": 401,
+        "ok": false,
+        "error": null
+      },
+      {
+        "name": "quote_probe",
+        "method": "GET",
+        "path": "/api/v1/product/stock-prices",
+        "status_code": 200,
+        "ok": true,
+        "error": null
+      }
+    ],
+    "last_errors": [
+      "account_list: 401",
+      "account_overview: 401",
+      "completed_orders_us_probe: 401"
+    ]
+  }
+}
