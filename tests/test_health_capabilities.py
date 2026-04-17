@@ -30,7 +30,13 @@ def test_logged_out_fixture_classifies_readiness() -> None:
     assert payload["capabilities"]["positions_ready"] is False
     assert payload["capabilities"]["completed_orders_ready"] is False
     assert payload["capabilities"]["quote_ready"] is True
-    assert all(payload["capabilities"][name] is False for name in MUTATION_CAPABILITIES)
+    assert payload["capabilities"]["order_preview_ready"] is False
+    assert payload["capabilities"]["post_submit_verify_ready"] is False
+    assert payload["capabilities"]["fx_preview_ready"] is False
+    assert payload["capabilities"]["order_submit_ready"] is False
+    assert payload["capabilities"]["fx_submit_ready"] is False
+    assert payload["capabilities"]["cancel_order_ready"] is False
+    assert all(name in payload["capabilities"] for name in MUTATION_CAPABILITIES)
 
 
 def test_logged_in_fixture_classifies_readiness() -> None:
@@ -52,4 +58,31 @@ def test_logged_in_fixture_classifies_readiness() -> None:
     assert payload["capabilities"]["positions_ready"] is True
     assert payload["capabilities"]["completed_orders_ready"] is True
     assert payload["capabilities"]["quote_ready"] is True
-    assert all(payload["capabilities"][name] is False for name in MUTATION_CAPABILITIES)
+    assert payload["capabilities"]["order_preview_ready"] is True
+    assert payload["capabilities"]["post_submit_verify_ready"] is False
+    assert payload["capabilities"]["fx_preview_ready"] is True
+    assert payload["capabilities"]["order_submit_ready"] is False
+    assert payload["capabilities"]["fx_submit_ready"] is False
+    assert payload["capabilities"]["cancel_order_ready"] is False
+    assert all(name in payload["capabilities"] for name in MUTATION_CAPABILITIES)
+
+
+def test_logged_in_fixture_enables_submit_readiness_only_with_runtime_state() -> None:
+    fixture = _load_fixture("health-logged-in.json")
+
+    capability, payload = classify_health_payload(
+        fixture["results"],
+        current_url=fixture["current_url"],
+        attached=fixture["attached"],
+        mutation_runtime_state={
+            "submit_path_discovered": True,
+            "verify_path_discovered": True,
+            "final_submit_enabled": True,
+            "journal_writable": True,
+            "inflight_available": True,
+        },
+    )
+
+    assert capability == "browser_attached"
+    assert payload["capabilities"]["post_submit_verify_ready"] is True
+    assert payload["capabilities"]["order_submit_ready"] is True

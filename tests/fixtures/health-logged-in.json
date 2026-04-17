@@ -41,6 +41,30 @@
       "status_code": 200,
       "ok": true,
       "error": null
+    },
+    {
+      "name": "fx_rate_probe",
+      "method": "GET",
+      "path": "/api/v1/product/exchange-rate",
+      "status_code": 200,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "fx_quote_for_buy_probe",
+      "method": "GET",
+      "path": "/api/v1/exchange/current-quote/for-buy",
+      "status_code": 200,
+      "ok": true,
+      "error": null
+    },
+    {
+      "name": "fx_quote_for_sell_probe",
+      "method": "GET",
+      "path": "/api/v1/exchange/current-quote/for-sell",
+      "status_code": 200,
+      "ok": true,
+      "error": null
     }
   ]
 }

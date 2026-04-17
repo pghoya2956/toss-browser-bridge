@@ -41,6 +41,7 @@ PROFILE_DIR = APP_SUPPORT_DIR / "chrome-profile"
 TOKEN_FILE = APP_SUPPORT_DIR / "token"
 PID_FILE = APP_SUPPORT_DIR / "daemon.pid"
 LOG_FILE = APP_SUPPORT_DIR / "daemon.log"
+MUTATION_JOURNAL_FILE = APP_SUPPORT_DIR / "mutation-journal.jsonl"
 
 
 def now_kst() -> str:

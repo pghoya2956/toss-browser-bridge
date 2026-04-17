@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 
 from toss_browser_bridge.daemon import BridgeHandler
+from toss_browser_bridge.preview import PreviewDomainError
+from toss_browser_bridge.submit import MutationDomainError
 
 
 class FakeRuntime:
@@ -28,6 +30,22 @@ class FakeRuntime:
     def execute(self, kind: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if kind == "explode":
             raise RuntimeError("boom")
+        if kind == "preview_invalid":
+            raise PreviewDomainError(
+                kind="order_preview",
+                capability="order_preview_ready",
+                code="invalid_request",
+                message="order_type is required",
+                diagnostics={"endpoint_matrix": [], "last_errors": []},
+            )
+        if kind == "mutation_blocked":
+            raise MutationDomainError(
+                kind="place_order",
+                capability="order_submit_ready",
+                code="capability_not_ready",
+                message="order submit path discovery is not completed yet",
+                diagnostics={"endpoint_matrix": [], "last_errors": []},
+            )
         return {"ok": True, "kind": kind, "params": params or {}}
 
 
@@ -121,3 +139,25 @@ def test_returns_runtime_errors_with_diagnostics(daemon_server: str) -> None:
         {"name": "account_overview", "method": "GET", "path": "/api/account", "status_code": 500, "ok": False}
     ]
     assert payload["diagnostics"]["last_errors"] == ["account_overview: 500"]
+
+
+def test_returns_preview_domain_errors_with_http_200(daemon_server: str) -> None:
+    status, payload = _request(daemon_server, "POST", "/bridge/query", body={"kind": "preview_invalid", "params": {}})
+
+    assert status == 200
+    assert payload["error"] == {
+        "code": "invalid_request",
+        "message": "order_type is required",
+    }
+    assert payload["capability"] == "order_preview_ready"
+
+
+def test_returns_mutation_domain_errors_with_http_200(daemon_server: str) -> None:
+    status, payload = _request(daemon_server, "POST", "/bridge/query", body={"kind": "mutation_blocked", "params": {}})
+
+    assert status == 200
+    assert payload["error"] == {
+        "code": "capability_not_ready",
+        "message": "order submit path discovery is not completed yet",
+    }
+    assert payload["capability"] == "order_submit_ready"

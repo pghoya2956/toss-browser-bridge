@@ -87,6 +87,24 @@ def main() -> None:
     quote = sub.add_parser("quote")
     quote.add_argument("--symbol", required=True)
     quote.add_argument("--market", default="us")
+    order_preview = sub.add_parser("order-preview")
+    order_preview.add_argument("--market", required=True, choices=["kr", "us"])
+    order_preview.add_argument("--side", required=True, choices=["buy", "sell"])
+    order_preview.add_argument("--symbol", required=True)
+    order_preview.add_argument("--order-type", required=True, choices=["market", "limit"])
+    order_preview.add_argument("--quantity", required=True, type=int)
+    order_preview.add_argument("--limit-price", type=float)
+    fx_preview = sub.add_parser("fx-preview")
+    fx_preview.add_argument("--side", required=True, choices=["buy", "sell"])
+    fx_preview.add_argument("--amount-krw", type=float)
+    fx_preview.add_argument("--amount-usd", type=float)
+    place_order = sub.add_parser("place-order")
+    place_order.add_argument("--preview-receipt-file", required=True)
+    place_order.add_argument("--preview-fingerprint", required=True)
+    place_order.add_argument("--confirm", action="store_true")
+    place_order.add_argument("--confirm-text", required=True)
+    verify_order = sub.add_parser("verify-order")
+    verify_order.add_argument("--mutation-id", required=True)
 
     args = parser.parse_args()
     command_map = {
@@ -99,12 +117,47 @@ def main() -> None:
         "positions": "positions",
         "completed-orders": "completed_orders",
         "quote": "quote",
+        "order-preview": "order_preview",
+        "fx-preview": "fx_preview",
+        "place-order": "place_order",
+        "verify-order": "verify_order",
     }
     params = {}
     if args.command == "completed-orders":
         params = {"market": args.market, "limit": args.limit}
     elif args.command == "quote":
         params = {"symbol": args.symbol, "market": args.market}
+    elif args.command == "order-preview":
+        params = {
+            "market": args.market,
+            "side": args.side,
+            "symbol": args.symbol,
+            "order_type": args.order_type,
+            "quantity": args.quantity,
+            "limit_price": args.limit_price,
+        }
+    elif args.command == "fx-preview":
+        params = {
+            "side": args.side,
+            "amount_krw": args.amount_krw,
+            "amount_usd": args.amount_usd,
+        }
+    elif args.command == "place-order":
+        receipt_path = Path(args.preview_receipt_file)
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            parser.error(f"preview receipt file not found: {receipt_path}")
+        except json.JSONDecodeError as exc:
+            parser.error(f"invalid JSON in preview receipt file: {receipt_path} ({exc})")
+        params = {
+            "preview_receipt": receipt,
+            "preview_fingerprint": args.preview_fingerprint,
+            "confirm": args.confirm,
+            "confirm_text": args.confirm_text,
+        }
+    elif args.command == "verify-order":
+        params = {"mutation_id": args.mutation_id}
     payload = invoke(command_map[args.command], params=params)
     json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")

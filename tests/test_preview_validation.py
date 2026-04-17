@@ -37,11 +37,9 @@ def test_validate_order_preview_params_normalizes_limit_order() -> None:
                 "market": "us",
                 "side": "buy",
                 "symbol": "TSLA",
-                "order_type": "market",
                 "quantity": 2,
-                "limit_price": 300,
             },
-            "limit_price is only allowed for limit orders",
+            "order_type is required",
         ),
         (
             {
@@ -52,6 +50,17 @@ def test_validate_order_preview_params_normalizes_limit_order() -> None:
                 "quantity": 2,
             },
             "limit_price is required for limit orders",
+        ),
+        (
+            {
+                "market": "us",
+                "side": "buy",
+                "symbol": "TSLA",
+                "order_type": "market",
+                "quantity": 2,
+                "limit_price": 300,
+            },
+            "limit_price is only allowed for limit orders",
         ),
         (
             {
