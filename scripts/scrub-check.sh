@@ -11,18 +11,23 @@ trap 'rm -f "$TRACKED_FILES"' EXIT HUP INT TERM
 git ls-files > "$TRACKED_FILES"
 
 if [ -s "$TRACKED_FILES" ]; then
-  if xargs rg -n \
-    -e '/Users/heeho/' \
-    -e '44258118' \
-    -e 'Application Support/financier-v2' \
-    -e 'financier-v2/scripts/toss-bridge' \
-    -e 'accountNo":[0-9]' \
-    -e 'XSRF-TOKEN=[^"]{12,}' \
-    -e 'browserSessionId[^[:space:]]{8,}' \
-    -e 'WTS-BROWSER-TAB-ID[^[:space:]]{8,}' \
-    < "$TRACKED_FILES"; then
-    echo "Scrub check failed"
-    exit 1
+  SEARCH_FILES="$(grep -v '^scripts/scrub-check\.sh$' "$TRACKED_FILES")"
+  if [ -n "$SEARCH_FILES" ]; then
+    # tracked repo paths do not contain spaces, so positional args keep the invocation portable.
+    set -- $SEARCH_FILES
+    if rg -n \
+      -e '/Users/heeho/' \
+      -e '44258118' \
+      -e 'Application Support/financier-v2' \
+      -e 'financier-v2/scripts/toss-bridge' \
+      -e 'accountNo":[0-9]' \
+      -e 'XSRF-TOKEN=[^"]{12,}' \
+      -e 'browserSessionId[^[:space:]]{8,}' \
+      -e 'WTS-BROWSER-TAB-ID[^[:space:]]{8,}' \
+      -- "$@"; then
+      echo "Scrub check failed"
+      exit 1
+    fi
   fi
 fi
 

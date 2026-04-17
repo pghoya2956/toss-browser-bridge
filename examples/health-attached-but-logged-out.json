@@ -16,7 +16,12 @@
       "account_summary_ready": false,
       "positions_ready": false,
       "completed_orders_ready": false,
-      "quote_ready": true
+      "quote_ready": true,
+      "order_preview_ready": false,
+      "order_submit_ready": false,
+      "fx_preview_ready": false,
+      "fx_submit_ready": false,
+      "cancel_order_ready": false
     },
     "session_state": "attached_but_logged_out"
   },

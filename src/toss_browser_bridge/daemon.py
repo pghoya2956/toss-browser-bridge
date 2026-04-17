@@ -77,6 +77,168 @@ ACCOUNT_LIST_ENDPOINT = {
     "url": "https://wts-api.tossinvest.com/api/v1/account/list",
     "path": "/api/v1/account/list",
 }
+PREVIEW_MARKETS = {"kr", "us"}
+ORDER_SIDES = {"buy", "sell"}
+ORDER_TYPES = {"market", "limit"}
+FX_SIDES = {"buy", "sell"}
+MUTATION_CAPABILITIES = (
+    "order_preview_ready",
+    "order_submit_ready",
+    "fx_preview_ready",
+    "fx_submit_ready",
+    "cancel_order_ready",
+)
+
+
+class PreviewValidationError(ValueError):
+    pass
+
+
+def normalize_product_code(symbol: str) -> str:
+    trimmed = symbol.strip().upper()
+    if len(trimmed) == 6 and trimmed.isdigit():
+        return f"A{trimmed}"
+    return trimmed
+
+
+def looks_like_product_code(value: str) -> bool:
+    if len(value) == 7 and value.startswith("A") and value[1:].isdigit():
+        return True
+    if len(value) >= 8 and value[:2].isalpha() and value[2:].isdigit():
+        return True
+    return False
+
+
+def validate_order_preview_params(params: dict[str, Any]) -> dict[str, Any]:
+    market = str(params.get("market") or "us").strip().lower()
+    if market not in PREVIEW_MARKETS:
+        raise PreviewValidationError(f"market must be one of: {', '.join(sorted(PREVIEW_MARKETS))}")
+
+    side = str(params.get("side") or "").strip().lower()
+    if side not in ORDER_SIDES:
+        raise PreviewValidationError(f"side must be one of: {', '.join(sorted(ORDER_SIDES))}")
+
+    symbol = normalize_product_code(str(params.get("symbol") or ""))
+    if not symbol:
+        raise PreviewValidationError("symbol is required")
+
+    order_type = str(params.get("order_type") or "market").strip().lower()
+    if order_type not in ORDER_TYPES:
+        raise PreviewValidationError(f"order_type must be one of: {', '.join(sorted(ORDER_TYPES))}")
+
+    quantity = _parse_positive_int(params.get("quantity"), "quantity")
+    limit_price_raw = params.get("limit_price")
+    limit_price = None
+    if order_type == "limit":
+        if limit_price_raw in (None, ""):
+            raise PreviewValidationError("limit_price is required for limit orders")
+        limit_price = _parse_positive_number(limit_price_raw, "limit_price")
+    elif limit_price_raw not in (None, ""):
+        raise PreviewValidationError("limit_price is only allowed for limit orders")
+
+    return {
+        "market": market,
+        "side": side,
+        "symbol": symbol,
+        "order_type": order_type,
+        "quantity": quantity,
+        "limit_price": limit_price,
+    }
+
+
+def validate_fx_preview_params(params: dict[str, Any]) -> dict[str, Any]:
+    side = str(params.get("side") or "").strip().lower()
+    if side not in FX_SIDES:
+        raise PreviewValidationError(f"side must be one of: {', '.join(sorted(FX_SIDES))}")
+
+    provided_amounts = [
+        (field, value)
+        for field, value in (
+            ("amount_krw", params.get("amount_krw")),
+            ("amount_usd", params.get("amount_usd")),
+        )
+        if value not in (None, "")
+    ]
+    if not provided_amounts:
+        raise PreviewValidationError("exactly one of amount_krw or amount_usd is required")
+    if len(provided_amounts) > 1:
+        raise PreviewValidationError("amount_krw and amount_usd cannot be provided together")
+
+    amount_field, raw_value = provided_amounts[0]
+    return {
+        "side": side,
+        "amount_field": amount_field,
+        "amount": _parse_positive_number(raw_value, amount_field),
+    }
+
+
+def _parse_positive_int(value: Any, field: str) -> int:
+    if isinstance(value, bool):
+        raise PreviewValidationError(f"{field} must be a positive integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise PreviewValidationError(f"{field} must be a positive integer") from exc
+    if parsed <= 0 or str(parsed) != str(value).strip():
+        raise PreviewValidationError(f"{field} must be a positive integer")
+    return parsed
+
+
+def _parse_positive_number(value: Any, field: str) -> float:
+    if isinstance(value, bool):
+        raise PreviewValidationError(f"{field} must be a positive number")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise PreviewValidationError(f"{field} must be a positive number") from exc
+    if parsed <= 0:
+        raise PreviewValidationError(f"{field} must be a positive number")
+    return parsed
+
+
+def classify_health_payload(
+    results: list[dict[str, Any]],
+    current_url: str | None,
+    attached: bool,
+) -> tuple[str, dict[str, Any]]:
+    logged_out = is_logged_out(current_url)
+    account_list_ok = _endpoint_ok(results, "account_list")
+    overview_ok = _endpoint_ok(results, "account_overview")
+    positions_ok = _endpoint_ok(results, "asset_sections_v2")
+    completed_orders_ok = _endpoint_ok(results, "completed_orders_us_probe")
+    quote_ok = _endpoint_ok(results, "quote_probe")
+    web_ready = (account_list_ok or overview_ok or positions_ok) and not logged_out
+
+    capabilities = {
+        "browser_attached": attached,
+        "web_session_ready": web_ready,
+        "wts_api_ready": account_list_ok and not logged_out,
+        "wts_cert_api_ready": (overview_ok or positions_ok) and not logged_out,
+        "account_summary_ready": overview_ok and not logged_out,
+        "positions_ready": positions_ok and not logged_out,
+        "completed_orders_ready": completed_orders_ok and not logged_out,
+        "quote_ready": quote_ok,
+    }
+    capabilities.update({name: False for name in MUTATION_CAPABILITIES})
+    payload = {
+        "attached": attached,
+        "current_url": current_url,
+        "profile_name": "toss-bridge",
+        "session_state": "attached_but_logged_out" if logged_out else "attached",
+        "capabilities": capabilities,
+    }
+    capability = "attached_but_logged_out" if logged_out else "browser_attached"
+    return capability, payload
+
+
+def _endpoint_ok(results: list[dict[str, Any]], name: str) -> bool:
+    return next((bool(item.get("ok")) for item in results if item.get("name") == name), False)
+
+
+def is_logged_out(url: str | None) -> bool:
+    if not url:
+        return True
+    return "/signin" in url
 
 
 @dataclass
@@ -196,7 +358,8 @@ class TossBridgeRuntime:
             results = page.evaluate(
                 r"""
                 async (requests) => {
-                  const xsrf = decodeURIComponent((document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]+)/) || [])[1] || "");
+                  const xsrfPattern = new RegExp("(?:^|; )" + "XSRF" + "-TOKEN=([^;]+)");
+                  const xsrf = decodeURIComponent((document.cookie.match(xsrfPattern) || [])[1] || "");
                   const browserTabId =
                     sessionStorage.getItem("WTS-BROWSER-TAB-ID") ||
                     localStorage.getItem("qr-tabId") ||
@@ -283,25 +446,6 @@ class TossBridgeRuntime:
             last_errors=list(self._last_errors),
         )
 
-    def _base_capabilities(self) -> dict[str, Any]:
-        current_url = self._page.url if self._page and not self._page.is_closed() else None
-        attached = self._context is not None and self._page is not None and not self._page.is_closed()
-        return {
-            "attached": attached,
-            "current_url": current_url,
-            "profile_name": "toss-bridge",
-            "capabilities": {
-                "browser_attached": attached,
-                "web_session_ready": False,
-                "wts_api_ready": False,
-                "wts_cert_api_ready": False,
-                "account_summary_ready": False,
-                "positions_ready": False,
-                "completed_orders_ready": False,
-                "quote_ready": False,
-            },
-        }
-
     def health(self) -> dict[str, Any]:
         page = self.ensure_page()
         probes = [
@@ -319,34 +463,13 @@ class TossBridgeRuntime:
         ]
         results = self._fetch_many(probes)
         context = self._make_context(results)
-        payload = self._base_capabilities()
-        payload["current_url"] = page.url
-        logged_out = self._is_logged_out(page.url)
-        payload["session_state"] = "attached_but_logged_out" if logged_out else "attached"
-
-        account_list_ok = next((item["ok"] for item in results if item["name"] == "account_list"), False)
-        overview_ok = next((item["ok"] for item in results if item["name"] == "account_overview"), False)
-        positions_ok = next((item["ok"] for item in results if item["name"] == "asset_sections_v2"), False)
-        completed_orders_ok = next((item["ok"] for item in results if item["name"] == "completed_orders_us_probe"), False)
-        quote_ok = next((item["ok"] for item in results if item["name"] == "quote_probe"), False)
-        web_ready = (account_list_ok or overview_ok or positions_ok) and not logged_out
-        payload["capabilities"].update(
-            {
-                "web_session_ready": web_ready,
-                "wts_api_ready": account_list_ok and not logged_out,
-                "wts_cert_api_ready": (overview_ok or positions_ok) and not logged_out,
-                "account_summary_ready": overview_ok and not logged_out,
-                "positions_ready": positions_ok and not logged_out,
-                "completed_orders_ready": completed_orders_ok and not logged_out,
-                "quote_ready": quote_ok,
-            }
-        )
+        capability, payload = classify_health_payload(results, current_url=page.url, attached=True)
         return {
             "ok": True,
             "kind": "health",
             "source": SOURCE,
             "checked_at": context.checked_at,
-            "capability": "attached_but_logged_out" if logged_out else "browser_attached",
+            "capability": capability,
             "data": payload,
             "diagnostics": {
                 "endpoint_matrix": context.endpoint_matrix,
@@ -356,7 +479,7 @@ class TossBridgeRuntime:
 
     def account_summary(self) -> dict[str, Any]:
         page = self.ensure_page()
-        if self._is_logged_out(page.url):
+        if is_logged_out(page.url):
             context = self._make_context([])
             return self._error_response(
                 "account_summary",
@@ -413,7 +536,7 @@ class TossBridgeRuntime:
 
     def positions(self) -> dict[str, Any]:
         page = self.ensure_page()
-        if self._is_logged_out(page.url):
+        if is_logged_out(page.url):
             context = self._make_context([])
             return self._error_response(
                 "positions",
@@ -491,7 +614,7 @@ class TossBridgeRuntime:
 
     def completed_orders(self, params: dict[str, Any]) -> dict[str, Any]:
         page = self.ensure_page()
-        if self._is_logged_out(page.url):
+        if is_logged_out(page.url):
             context = self._make_context([])
             return self._error_response(
                 "completed_orders",
@@ -581,9 +704,9 @@ class TossBridgeRuntime:
                 context,
                 code="invalid_request",
             )
-        product_code = self._normalize_product_code(symbol)
+        product_code = normalize_product_code(symbol)
         requests: list[dict[str, Any]] = []
-        if not self._looks_like_product_code(product_code):
+        if not looks_like_product_code(product_code):
             requests.append(
                 {
                     "name": "search_stocks",
@@ -731,21 +854,6 @@ class TossBridgeRuntime:
         value = payload.get(key)
         return value if value is not None else None
 
-    @staticmethod
-    def _normalize_product_code(symbol: str) -> str:
-        trimmed = symbol.strip().upper()
-        if len(trimmed) == 6 and trimmed.isdigit():
-            return f"A{trimmed}"
-        return trimmed
-
-    @staticmethod
-    def _looks_like_product_code(value: str) -> bool:
-        if len(value) == 7 and value.startswith("A") and value[1:].isdigit():
-            return True
-        if len(value) >= 8 and value[:2].isalpha() and value[2:].isdigit():
-            return True
-        return False
-
     def _error_response(
         self,
         kind: str,
@@ -769,13 +877,6 @@ class TossBridgeRuntime:
                 "last_errors": context.last_errors,
             },
         }
-
-    @staticmethod
-    def _is_logged_out(url: str | None) -> bool:
-        if not url:
-            return True
-        return "/signin" in url
-
 
 class BridgeHandler(BaseHTTPRequestHandler):
     runtime = TossBridgeRuntime()
