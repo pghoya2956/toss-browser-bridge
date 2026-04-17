@@ -4,6 +4,8 @@
 
 공식 토스증권 API 프로젝트가 아니다. browser-attached companion 성격의 **비공식 read-only 도구**다.
 
+정식 지원 범위는 **macOS desktop + 로컬 Google Chrome**이다.
+
 ## 현재 지원 명령
 
 - `health`
@@ -20,7 +22,25 @@
 - `shutdown`
 - `diagnostics`
 
-## quickstart
+## 설치형 사용법
+
+설치형 canonical path는 **repo checkout 없이** `toss-bridge ...`만 호출하는 것이다.
+
+예시:
+
+```bash
+uv tool install /path/to/toss-browser-bridge
+toss-bridge health
+toss-bridge open-login
+toss-bridge account-summary
+toss-bridge order-preview --market us --side buy --symbol AAPL --order-type market --quantity 1
+toss-bridge fx-preview --side buy --amount-krw 100000
+toss-bridge place-order --preview-receipt-file /tmp/order-preview.json --preview-fingerprint sha256:... --confirm --confirm-text "BUY 3 AAPL LIMIT 201.50 US"
+```
+
+설치형 경로에서도 daemon bootstrap은 현재 설치된 Python 환경에서 직접 올라간다. canonical path에서 repo-local `uv run --project . ...` 재호출에 의존하지 않는다.
+
+## 개발용 quickstart
 
 ```bash
 uv run --project . toss-bridge health
@@ -33,6 +53,8 @@ uv run --project . --extra dev pytest
 TOSS_BRIDGE_LIVE_E2E=1 uv run --project . --extra dev pytest tests/test_live_e2e.py -q
 sh scripts/scrub-check.sh
 ```
+
+개발 중에는 repo 안에서 `uv run --project . ...`를 써도 되지만, 소비 프로젝트와 실제 운영 경로는 설치형 `toss-bridge`를 기준으로 본다.
 
 런타임 상태는 기본적으로 아래 경로를 사용한다.
 
@@ -50,6 +72,9 @@ sh scripts/scrub-check.sh
 ## 예시 출력
 
 - logged out capability matrix: [examples/health-attached-but-logged-out.json](examples/health-attached-but-logged-out.json)
+- install guide: [docs/installing.md](docs/installing.md)
+- runtime contract: [docs/runtime-contract.md](docs/runtime-contract.md)
+- consumer integration: [docs/consumer-integration.md](docs/consumer-integration.md)
 - preview layer guide: [docs/preview-layer.md](docs/preview-layer.md)
 - supervised submit guide: [docs/guarded-submit-supervised-validation.md](docs/guarded-submit-supervised-validation.md)
 

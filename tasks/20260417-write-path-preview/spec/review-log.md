@@ -2,7 +2,7 @@
 
 ## 검토 대상
 
-- 파일: [tasks/20260417-write-path-preview/spec/initial.md](/Users/heeho/para/Area/pghoya2956/toss-browser-bridge/tasks/20260417-write-path-preview/spec/initial.md)
+- 파일: [initial.md](initial.md)
 - 검토일: 2026-04-17 KST
 
 ## 발견 사항

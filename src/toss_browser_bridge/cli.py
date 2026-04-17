@@ -17,7 +17,30 @@ from toss_browser_bridge.bridge_lib import (
     wait_for_port,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+def resolve_python_executable() -> str:
+    executable = sys.executable.strip()
+    if not executable:
+        raise RuntimeError(
+            "current Python interpreter is unavailable; "
+            "reinstall toss-browser-bridge or run toss-bridge-daemon manually"
+        )
+    if not Path(executable).exists():
+        raise RuntimeError(
+            f"current Python interpreter does not exist: {executable}; "
+            "reinstall toss-browser-bridge or run toss-bridge-daemon manually"
+        )
+    return executable
+
+
+def build_daemon_command() -> list[str]:
+    return [
+        resolve_python_executable(),
+        "-m",
+        "toss_browser_bridge.daemon",
+        "run",
+        "--port",
+        str(PORT),
+    ]
 
 
 def ensure_daemon_running() -> str:
@@ -32,28 +55,31 @@ def ensure_daemon_running() -> str:
             "set TOSS_BRIDGE_PORT or stop the conflicting daemon"
         )
 
-    cmd = [
-        "uv",
-        "run",
-        "--project",
-        str(REPO_ROOT),
-        "python",
-        "-m",
-        "toss_browser_bridge.daemon",
-        "run",
-    ]
-    subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    cmd = build_daemon_command()
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise RuntimeError(
+            "bridge daemon failed to launch with the installed Python environment; "
+            "reinstall toss-browser-bridge or run toss-bridge-daemon manually"
+        ) from exc
     if not wait_for_port(timeout=20.0):
-        raise RuntimeError(f"bridge daemon did not start on {HOST}:{PORT}")
+        raise RuntimeError(
+            f"bridge daemon did not start on {HOST}:{PORT}; "
+            "check Chrome/Playwright prerequisites or run toss-bridge-daemon manually"
+        )
     token = read_text_if_exists(TOKEN_FILE)
     if not token:
-        raise RuntimeError("bridge token file was not created")
+        raise RuntimeError(
+            "bridge token file was not created; "
+            "check daemon startup logs or run toss-bridge-daemon manually"
+        )
     return token
 
 
