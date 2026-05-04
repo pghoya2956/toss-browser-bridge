@@ -45,6 +45,12 @@ BROKER_ACK_ALLOWED_FIELDS = {
     "quantity",
     "order_type",
     "ordered_at",
+    "broker_order_id",
+    "order_no",
+    "order_date",
+    "is_reserved",
+    "http_status",
+    "guard_reason",
 }
 VERIFY_SNAPSHOT_ALLOWED_FIELDS = {
     "status",
