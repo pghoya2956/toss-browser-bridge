@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -58,6 +59,16 @@ ACCOUNT_URL = "https://www.tossinvest.com/account"
 KST = ZoneInfo("Asia/Seoul")
 FINAL_SUBMIT_ENABLE_ENV = "TOSS_BRIDGE_ENABLE_FINAL_SUBMIT"
 FINAL_SUBMIT_TEST_BYPASS_ENV = "TOSS_BRIDGE_ALLOW_TEST_FINAL_SUBMIT"
+
+
+def _resolve_bridge_version() -> str:
+    try:
+        return _pkg_version("toss-browser-bridge")
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
+
+
+BRIDGE_VERSION = _resolve_bridge_version()
 
 BROKER_ACK_OK = "OK"
 BROKER_REJECTED_INSUFFICIENT_BALANCE = "BROKER_REJECTED_INSUFFICIENT_BALANCE"
@@ -631,6 +642,7 @@ class TossBridgeRuntime:
             "source": SOURCE,
             "checked_at": context.checked_at,
             "capability": capability,
+            "bridge_version": BRIDGE_VERSION,
             "data": payload,
             "diagnostics": {
                 "endpoint_matrix": context.endpoint_matrix,
