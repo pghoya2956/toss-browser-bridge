@@ -16,6 +16,7 @@ from toss_browser_bridge.submit import (
     build_order_preview_receipt,
     find_recent_mutation_by_id,
 )
+from toss_browser_bridge.daemon import classify_broker_reject
 
 
 class FakePage:
@@ -558,3 +559,238 @@ def test_final_submit_can_be_explicitly_unblocked_for_manual_non_pytest_runtime(
 
     assert runtime._final_submit_enabled is True
     assert runtime._mutation_runtime_state()["final_submit_guard_reason"] == "enabled_by_env"
+
+
+def test_classify_broker_reject_maps_status_codes_to_enum() -> None:
+    assert classify_broker_reject(message=None, status_code=0, error="EAI_AGAIN") == "BROKER_REJECTED_TIMEOUT"
+    assert classify_broker_reject(message="gateway timeout", status_code=504, error=None) == "BROKER_REJECTED_TIMEOUT"
+    assert classify_broker_reject(message="forbidden", status_code=403, error=None) == "BROKER_REJECTED_AUTH_REQUIRED"
+    assert classify_broker_reject(message="unauthorized", status_code=401, error=None) == "BROKER_REJECTED_AUTH_REQUIRED"
+    assert classify_broker_reject(message="server error", status_code=500, error=None) == "BROKER_REJECTED_HTTP_ERROR"
+    assert classify_broker_reject(message="unknown", status_code=200, error=None) == "BROKER_REJECTED_UNKNOWN"
+    assert classify_broker_reject(message=None, status_code=400, error=None) == "BROKER_REJECTED_UNKNOWN"
+
+
+def _enable_final_submit(monkeypatch) -> None:
+    monkeypatch.setenv("TOSS_BRIDGE_ENABLE_FINAL_SUBMIT", "1")
+    monkeypatch.setenv("TOSS_BRIDGE_ALLOW_TEST_FINAL_SUBMIT", "1")
+
+
+def _stub_place_order_dependencies(runtime, monkeypatch, tmp_path, fingerprint) -> None:
+    monkeypatch.setattr(daemon_module, "MUTATION_JOURNAL_FILE", tmp_path / "mutation-journal.jsonl")
+    runtime.order_preview = MethodType(
+        lambda self, params: {
+            "ok": True,
+            "kind": "order_preview",
+            "checked_at": "2026-05-04T23:40:00+09:00",
+            "diagnostics": {"endpoint_matrix": [], "last_errors": []},
+            "data": {
+                "preview_state": "preview_ready",
+                "preview_fingerprint": fingerprint,
+            },
+        },
+        runtime,
+    )
+    runtime._run_prepare_preflight = MethodType(
+        lambda self, normalized: {
+            "message": "prepare preflight succeeded",
+            "context": self._make_context([]),
+            "account_no": "44258118-01",
+            "submit_market": "NSQ",
+            "currency_mode": "USD",
+            "allow_auto_exchange": False,
+            "prepare_payload": {
+                "stockCode": "US0378331005",
+                "tradeType": "buy",
+                "market": "NSQ",
+                "currencyMode": "USD",
+                "price": 200.0,
+                "quantity": 1,
+                "orderAmount": 0,
+                "orderPriceType": "00",
+                "agreedOver100Million": False,
+                "marginTrading": False,
+                "max": False,
+                "isReservationOrder": False,
+                "openPriceSinglePriceYn": False,
+                "withOrderKey": True,
+            },
+            "prepare_body": {"orderKey": "trade::session::stub"},
+            "prepared_order_info": {"price": 200.0, "quantity": 1},
+        },
+        runtime,
+    )
+
+
+def test_place_order_submits_when_broker_create_returns_order_id(tmp_path, monkeypatch) -> None:
+    _enable_final_submit(monkeypatch)
+    runtime = _runtime()
+    receipt = _receipt()
+    _stub_place_order_dependencies(runtime, monkeypatch, tmp_path, receipt["preview_fingerprint"])
+    runtime._fetch_many = MethodType(
+        lambda self, requests: [
+            {
+                "name": "order_create",
+                "method": "POST",
+                "path": "/api/v2/wts/trading/order/create",
+                "status_code": 200,
+                "ok": True,
+                "json": {
+                    "result": {
+                        "message": "AAPL 매수 주문 완료",
+                        "orderDate": "2026-05-04",
+                        "orderNo": 3,
+                        "isReserved": False,
+                        "orderId": "V56qyv7r",
+                    }
+                },
+                "text": "",
+                "error": None,
+            }
+        ],
+        runtime,
+    )
+
+    response = runtime.place_order(
+        {
+            "preview_receipt": receipt,
+            "preview_fingerprint": receipt["preview_fingerprint"],
+            "confirm": True,
+            "confirm_text": "BUY 1 AAPL LIMIT 200.00 US",
+        }
+    )
+
+    assert response["ok"] is True
+    data = response["data"]
+    assert data["submit_state"] == "submitted"
+    assert data["broker_ack"]["status"] == "submitted"
+    assert data["broker_ack"]["code"] == "OK"
+    assert data["broker_ack"]["broker_order_id"] == "V56qyv7r"
+    assert data["broker_ack"]["order_no"] == 3
+    assert data["broker_ack"]["order_date"] == "2026-05-04"
+    assert data["broker_ack"]["http_status"] == 200
+
+
+def test_place_order_marks_broker_rejected_when_orderid_missing(tmp_path, monkeypatch) -> None:
+    _enable_final_submit(monkeypatch)
+    runtime = _runtime()
+    receipt = _receipt()
+    _stub_place_order_dependencies(runtime, monkeypatch, tmp_path, receipt["preview_fingerprint"])
+    runtime._fetch_many = MethodType(
+        lambda self, requests: [
+            {
+                "name": "order_create",
+                "method": "POST",
+                "path": "/api/v2/wts/trading/order/create",
+                "status_code": 200,
+                "ok": True,
+                "json": {"result": {"message": "주문 거절"}},
+                "text": "",
+                "error": None,
+            }
+        ],
+        runtime,
+    )
+
+    response = runtime.place_order(
+        {
+            "preview_receipt": receipt,
+            "preview_fingerprint": receipt["preview_fingerprint"],
+            "confirm": True,
+            "confirm_text": "BUY 1 AAPL LIMIT 200.00 US",
+        }
+    )
+
+    data = response["data"]
+    assert data["submit_state"] == "broker_rejected"
+    assert data["broker_ack"]["code"] == "BROKER_REJECTED_UNKNOWN"
+    assert "broker_order_id" not in data["broker_ack"]
+
+
+def test_place_order_marks_broker_rejected_with_timeout_on_runtime_error(tmp_path, monkeypatch) -> None:
+    _enable_final_submit(monkeypatch)
+    runtime = _runtime()
+    receipt = _receipt()
+    _stub_place_order_dependencies(runtime, monkeypatch, tmp_path, receipt["preview_fingerprint"])
+
+    def _raise_timeout(self, requests):
+        raise RuntimeError("browser request timed out: 30000ms")
+
+    runtime._fetch_many = MethodType(_raise_timeout, runtime)
+
+    response = runtime.place_order(
+        {
+            "preview_receipt": receipt,
+            "preview_fingerprint": receipt["preview_fingerprint"],
+            "confirm": True,
+            "confirm_text": "BUY 1 AAPL LIMIT 200.00 US",
+        }
+    )
+
+    data = response["data"]
+    assert data["submit_state"] == "broker_rejected"
+    assert data["broker_ack"]["code"] == "BROKER_REJECTED_TIMEOUT"
+    assert data["broker_ack"]["http_status"] == 0
+
+
+def test_place_order_auto_verify_attaches_verify_snapshot_when_submitted(tmp_path, monkeypatch) -> None:
+    _enable_final_submit(monkeypatch)
+    runtime = _runtime()
+    receipt = _receipt()
+    _stub_place_order_dependencies(runtime, monkeypatch, tmp_path, receipt["preview_fingerprint"])
+    runtime._fetch_many = MethodType(
+        lambda self, requests: [
+            {
+                "name": "order_create",
+                "method": "POST",
+                "path": "/api/v2/wts/trading/order/create",
+                "status_code": 200,
+                "ok": True,
+                "json": {
+                    "result": {
+                        "message": "AAPL 매수 주문 완료",
+                        "orderDate": "2026-05-04",
+                        "orderNo": 3,
+                        "isReserved": False,
+                        "orderId": "V56qyv7r",
+                    }
+                },
+                "text": "",
+                "error": None,
+            }
+        ],
+        runtime,
+    )
+    verify_calls: list[dict] = []
+
+    def _fake_verify_order(self, params):
+        verify_calls.append(params)
+        return {
+            "ok": True,
+            "kind": "verify_order",
+            "data": {
+                "verification_state": "verified_success",
+                "verify_snapshot": {
+                    "status": "verified_success",
+                    "matched_order": {"order_no": 3},
+                    "verified_at": "2026-05-04T23:41:00+09:00",
+                },
+            },
+        }
+
+    runtime.verify_order = MethodType(_fake_verify_order, runtime)
+
+    response = runtime.place_order(
+        {
+            "preview_receipt": receipt,
+            "preview_fingerprint": receipt["preview_fingerprint"],
+            "confirm": True,
+            "confirm_text": "BUY 1 AAPL LIMIT 200.00 US",
+            "auto_verify": True,
+        }
+    )
+
+    data = response["data"]
+    assert len(verify_calls) == 1
+    assert data["verification_state"] == "verified_success"
+    assert data["verify_snapshot"]["matched_order"]["order_no"] == 3
