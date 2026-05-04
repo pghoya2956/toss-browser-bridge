@@ -1220,30 +1220,60 @@ class TossBridgeRuntime:
                 )
 
             preflight = self._run_prepare_preflight(normalized)
+
+            if not self._final_submit_enabled:
+                self._append_place_order_journal(
+                    mutation_id=mutation_id,
+                    normalized=normalized,
+                    submit_state="submit_blocked",
+                    verification_state="pending",
+                    broker_ack={
+                        "status": "prepared",
+                        "code": "PREPARED",
+                        "message": preflight["message"],
+                        "guard_reason": self._final_submit_guard_reason,
+                        "market": normalized["preview_receipt"]["inputs"]["market"],
+                        "symbol": normalized["preview_receipt"]["inputs"]["symbol"],
+                        "side": normalized["preview_receipt"]["inputs"]["side"],
+                        "quantity": normalized["preview_receipt"]["inputs"]["quantity"],
+                        "order_type": normalized["preview_receipt"]["inputs"]["order_type"],
+                    },
+                )
+                raise self._mutation_error(
+                    "place_order",
+                    "order_submit_ready",
+                    "capability_not_ready",
+                    f"final submit is disabled ({self._final_submit_guard_reason}); prepare preflight succeeded",
+                    preflight["context"],
+                    extra_diagnostics={"mutation_id": mutation_id},
+                )
+
+            broker_ack, broker_context = self._run_broker_create(normalized, preflight)
+            submit_state = "submitted" if broker_ack.get("status") == "submitted" else "broker_rejected"
             self._append_place_order_journal(
                 mutation_id=mutation_id,
                 normalized=normalized,
-                submit_state="submit_blocked",
+                submit_state=submit_state,
                 verification_state="pending",
-                broker_ack={
-                    "status": "prepared",
-                    "code": "PREPARED",
-                    "message": preflight["message"],
-                    "market": normalized["preview_receipt"]["inputs"]["market"],
-                    "symbol": normalized["preview_receipt"]["inputs"]["symbol"],
-                    "side": normalized["preview_receipt"]["inputs"]["side"],
-                    "quantity": normalized["preview_receipt"]["inputs"]["quantity"],
-                    "order_type": normalized["preview_receipt"]["inputs"]["order_type"],
+                broker_ack=broker_ack,
+            )
+            return {
+                "ok": True,
+                "kind": "place_order",
+                "source": SOURCE,
+                "checked_at": broker_context.checked_at,
+                "capability": "order_submit_ready",
+                "data": {
+                    "mutation_id": mutation_id,
+                    "submit_state": submit_state,
+                    "verification_state": "pending",
+                    "broker_ack": broker_ack,
                 },
-            )
-            raise self._mutation_error(
-                "place_order",
-                "order_submit_ready",
-                "capability_not_ready",
-                preflight["message"],
-                preflight["context"],
-                extra_diagnostics={"mutation_id": mutation_id},
-            )
+                "diagnostics": {
+                    "endpoint_matrix": broker_context.endpoint_matrix,
+                    "last_errors": broker_context.last_errors,
+                },
+            }
         finally:
             self._mutation_inflight = False
 
@@ -2019,9 +2049,105 @@ class TossBridgeRuntime:
             )
 
         return {
-            "message": "prepare preflight succeeded; final create remains blocked until post-submit verify path is implemented",
+            "message": "prepare preflight succeeded",
             "context": context,
+            "account_no": account_no,
+            "submit_market": submit_market,
+            "currency_mode": currency_mode,
+            "allow_auto_exchange": allow_auto_exchange,
+            "prepare_payload": prepare_payload,
+            "prepare_body": prepare_body,
+            "prepared_order_info": prepared_order_info,
         }
+
+    def _run_broker_create(
+        self,
+        normalized: dict[str, Any],
+        preflight: dict[str, Any],
+    ) -> tuple[dict[str, Any], QueryContext]:
+        """Call POST /api/v2/wts/trading/order/create after prepare preflight succeeded.
+
+        Endpoint URL/body schema captured in Phase 0 P0-02 (HAR diff against
+        simulation baseline). Body = prepare_payload minus the ``withOrderKey``
+        key; ``orderKey`` is tracked server-side via session cookie.
+        """
+        prepare_payload = preflight["prepare_payload"]
+        create_payload = {key: value for key, value in prepare_payload.items() if key != "withOrderKey"}
+        account_no = preflight["account_no"]
+        inputs = normalized["preview_receipt"]["inputs"]
+        market_label = str(inputs.get("market") or "")
+        symbol_label = str(inputs.get("symbol") or "")
+        side_label = str(inputs.get("side") or "")
+        quantity_label = inputs.get("quantity")
+        order_type_label = str(inputs.get("order_type") or "")
+
+        create_request = {
+            "name": "order_create",
+            "method": "POST",
+            "url": "https://wts-cert-api.tossinvest.com/api/v2/wts/trading/order/create",
+            "path": "/api/v2/wts/trading/order/create",
+            "headers": {"X-Tossinvest-Account": account_no},
+            "include_app_version": True,
+            "body": create_payload,
+        }
+        results = self._fetch_many([create_request])
+        context = self._make_context(results)
+        result = results[0]
+
+        ordered_at = now_kst()
+        base_ack = {
+            "market": market_label,
+            "symbol": symbol_label,
+            "side": side_label,
+            "quantity": quantity_label,
+            "order_type": order_type_label,
+        }
+
+        if not result.get("ok"):
+            error = result.get("error") or {}
+            return (
+                {
+                    **base_ack,
+                    "status": "broker_rejected",
+                    "code": "BROKER_REJECTED_UNKNOWN",
+                    "message": str(error.get("message") or "broker create request failed"),
+                    "ordered_at": ordered_at,
+                    "http_status": result.get("status"),
+                },
+                context,
+            )
+
+        body = result.get("json") or {}
+        broker_result = body.get("result") or {}
+        order_id = str(broker_result.get("orderId") or "").strip()
+        if not order_id:
+            return (
+                {
+                    **base_ack,
+                    "status": "broker_rejected",
+                    "code": "BROKER_REJECTED_UNKNOWN",
+                    "message": str(broker_result.get("message") or body.get("message") or "broker create response missing orderId"),
+                    "ordered_at": ordered_at,
+                    "http_status": result.get("status"),
+                },
+                context,
+            )
+
+        return (
+            {
+                **base_ack,
+                "status": "submitted",
+                "code": "OK",
+                "message": str(broker_result.get("message") or ""),
+                "broker_order_id": order_id,
+                "order_no": broker_result.get("orderNo"),
+                "order_date": broker_result.get("orderDate"),
+                "is_reserved": bool(broker_result.get("isReserved") or False),
+                "ordered_at": ordered_at,
+                "http_status": result.get("status"),
+            },
+            context,
+        )
 
     @staticmethod
     def _resolve_prepare_market(receipt: dict[str, Any]) -> str:

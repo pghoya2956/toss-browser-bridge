@@ -110,8 +110,15 @@ def test_place_order_returns_capability_not_ready_until_verify_is_implemented(tm
     monkeypatch.setattr(daemon_module, "MUTATION_JOURNAL_FILE", tmp_path / "mutation-journal.jsonl")
     runtime._run_prepare_preflight = MethodType(
         lambda self, normalized: {
-            "message": "prepare preflight succeeded; final create remains blocked until post-submit verify path is implemented",
+            "message": "prepare preflight succeeded",
             "context": None,
+            "account_no": "44258118-01",
+            "submit_market": "NSQ",
+            "currency_mode": "USD",
+            "allow_auto_exchange": False,
+            "prepare_payload": {},
+            "prepare_body": {},
+            "prepared_order_info": {},
         },
         runtime,
     )
@@ -128,7 +135,7 @@ def test_place_order_returns_capability_not_ready_until_verify_is_implemented(tm
 
     with pytest.raises(
         MutationDomainError,
-        match="prepare preflight succeeded; final create remains blocked until post-submit verify path is implemented",
+        match=r"final submit is disabled \(disabled_by_default\); prepare preflight succeeded",
     ) as excinfo:
         runtime.place_order(
             {
