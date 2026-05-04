@@ -129,6 +129,7 @@ def main() -> None:
     place_order.add_argument("--preview-fingerprint", required=True)
     place_order.add_argument("--confirm", action="store_true")
     place_order.add_argument("--confirm-text", required=True)
+    place_order.add_argument("--auto-verify", action="store_true")
     verify_order = sub.add_parser("verify-order")
     verify_order.add_argument("--mutation-id", required=True)
 
@@ -181,6 +182,7 @@ def main() -> None:
             "preview_fingerprint": args.preview_fingerprint,
             "confirm": args.confirm,
             "confirm_text": args.confirm_text,
+            "auto_verify": args.auto_verify,
         }
     elif args.command == "verify-order":
         params = {"mutation_id": args.mutation_id}

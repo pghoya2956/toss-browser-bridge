@@ -1298,18 +1298,30 @@ class TossBridgeRuntime:
                 verification_state="pending",
                 broker_ack=broker_ack,
             )
+
+            data: dict[str, Any] = {
+                "mutation_id": mutation_id,
+                "submit_state": submit_state,
+                "verification_state": "pending",
+                "broker_ack": broker_ack,
+            }
+            if normalized.get("auto_verify") and submit_state == "submitted":
+                try:
+                    verify_payload = self.verify_order({"mutation_id": mutation_id})
+                except MutationDomainError as exc:
+                    data["auto_verify_error"] = {"code": exc.code, "message": exc.message}
+                else:
+                    verify_data = verify_payload.get("data") or {}
+                    data["verification_state"] = verify_data.get("verification_state") or "pending"
+                    if "verify_snapshot" in verify_data:
+                        data["verify_snapshot"] = verify_data["verify_snapshot"]
             return {
                 "ok": True,
                 "kind": "place_order",
                 "source": SOURCE,
                 "checked_at": broker_context.checked_at,
                 "capability": "order_submit_ready",
-                "data": {
-                    "mutation_id": mutation_id,
-                    "submit_state": submit_state,
-                    "verification_state": "pending",
-                    "broker_ack": broker_ack,
-                },
+                "data": data,
                 "diagnostics": {
                     "endpoint_matrix": broker_context.endpoint_matrix,
                     "last_errors": broker_context.last_errors,

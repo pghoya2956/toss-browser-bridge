@@ -279,11 +279,14 @@ def validate_place_order_params(params: dict[str, Any]) -> dict[str, Any]:
     if confirm_text != confirm_phrase:
         raise MutationValidationError("confirm_text does not match the canonical confirm phrase", code="submit_blocked")
 
+    auto_verify = bool(params.get("auto_verify") or False)
+
     return {
         "preview_receipt": receipt,
         "preview_fingerprint": preview_fingerprint,
         "confirm_phrase": confirm_phrase,
         "confirm_phrase_hash": build_confirm_phrase_hash(confirm_phrase),
+        "auto_verify": auto_verify,
     }
 
 
