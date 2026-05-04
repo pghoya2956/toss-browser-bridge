@@ -25,3 +25,9 @@ def test_project_version_matches_runtime_version() -> None:
 
     assert pyproject["project"]["name"] == "toss-browser-bridge"
     assert pyproject["project"]["version"] == __version__
+
+
+def test_daemon_bridge_version_constant_matches_package_version() -> None:
+    from toss_browser_bridge.daemon import BRIDGE_VERSION
+
+    assert BRIDGE_VERSION == __version__

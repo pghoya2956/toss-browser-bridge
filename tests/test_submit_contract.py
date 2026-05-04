@@ -178,6 +178,74 @@ def test_mutation_journal_sanitizes_forbidden_fields(tmp_path) -> None:
     assert saved == sanitize_mutation_journal_entry(entry)
 
 
+def test_mutation_journal_preserves_broker_create_fields(tmp_path) -> None:
+    path = tmp_path / "mutation-journal.jsonl"
+    entry = append_mutation_journal(
+        path,
+        {
+            "mutation_id": "mut_5678",
+            "kind": "place_order",
+            "requested_at": "2026-05-04T23:40:49+09:00",
+            "preview_fingerprint": "sha256:create",
+            "confirm_phrase_hash": "sha256:phrase",
+            "submit_state": "submitted",
+            "verification_state": "pending",
+            "broker_ack": {
+                "status": "submitted",
+                "code": "OK",
+                "message": "SCHD 판매 주문 완료",
+                "market": "us",
+                "symbol": "SCHD",
+                "side": "sell",
+                "quantity": 1,
+                "order_type": "limit",
+                "ordered_at": "2026-05-04T23:40:49+09:00",
+                "broker_order_id": "V56qyv7r",
+                "order_no": 3,
+                "order_date": "2026-05-04",
+                "is_reserved": False,
+                "http_status": 200,
+            },
+        },
+    )
+
+    ack = entry["broker_ack"]
+    assert ack["broker_order_id"] == "V56qyv7r"
+    assert ack["order_no"] == 3
+    assert ack["order_date"] == "2026-05-04"
+    assert ack["is_reserved"] is False
+    assert ack["http_status"] == 200
+
+
+def test_mutation_journal_preserves_guard_reason_on_blocked_entry(tmp_path) -> None:
+    path = tmp_path / "mutation-journal.jsonl"
+    entry = append_mutation_journal(
+        path,
+        {
+            "mutation_id": "mut_blocked",
+            "kind": "place_order",
+            "requested_at": "2026-05-05T10:00:00+09:00",
+            "preview_fingerprint": "sha256:blocked",
+            "confirm_phrase_hash": "sha256:phrase",
+            "submit_state": "submit_blocked",
+            "verification_state": "pending",
+            "broker_ack": {
+                "status": "prepared",
+                "code": "PREPARED",
+                "message": "prepare preflight succeeded",
+                "guard_reason": "disabled_by_default",
+                "market": "us",
+                "symbol": "AAPL",
+                "side": "buy",
+                "quantity": 1,
+                "order_type": "limit",
+            },
+        },
+    )
+
+    assert entry["broker_ack"]["guard_reason"] == "disabled_by_default"
+
+
 def test_mutation_journal_line_preview_is_sanitized() -> None:
     line = mutation_journal_line_preview(
         {
