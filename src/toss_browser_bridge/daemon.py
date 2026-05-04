@@ -58,6 +58,47 @@ ACCOUNT_URL = "https://www.tossinvest.com/account"
 KST = ZoneInfo("Asia/Seoul")
 FINAL_SUBMIT_ENABLE_ENV = "TOSS_BRIDGE_ENABLE_FINAL_SUBMIT"
 FINAL_SUBMIT_TEST_BYPASS_ENV = "TOSS_BRIDGE_ALLOW_TEST_FINAL_SUBMIT"
+
+BROKER_ACK_OK = "OK"
+BROKER_REJECTED_INSUFFICIENT_BALANCE = "BROKER_REJECTED_INSUFFICIENT_BALANCE"
+BROKER_REJECTED_INSUFFICIENT_QUANTITY = "BROKER_REJECTED_INSUFFICIENT_QUANTITY"
+BROKER_REJECTED_INVALID_PRICE = "BROKER_REJECTED_INVALID_PRICE"
+BROKER_REJECTED_MARKET_CLOSED = "BROKER_REJECTED_MARKET_CLOSED"
+BROKER_REJECTED_AUTH_REQUIRED = "BROKER_REJECTED_AUTH_REQUIRED"
+BROKER_REJECTED_DUPLICATE_ORDER = "BROKER_REJECTED_DUPLICATE_ORDER"
+BROKER_REJECTED_TIMEOUT = "BROKER_REJECTED_TIMEOUT"
+BROKER_REJECTED_HTTP_ERROR = "BROKER_REJECTED_HTTP_ERROR"
+BROKER_REJECTED_UNKNOWN = "BROKER_REJECTED_UNKNOWN"
+
+BROKER_ACK_REJECT_CODES = frozenset({
+    BROKER_REJECTED_INSUFFICIENT_BALANCE,
+    BROKER_REJECTED_INSUFFICIENT_QUANTITY,
+    BROKER_REJECTED_INVALID_PRICE,
+    BROKER_REJECTED_MARKET_CLOSED,
+    BROKER_REJECTED_AUTH_REQUIRED,
+    BROKER_REJECTED_DUPLICATE_ORDER,
+    BROKER_REJECTED_TIMEOUT,
+    BROKER_REJECTED_HTTP_ERROR,
+    BROKER_REJECTED_UNKNOWN,
+})
+
+
+def classify_broker_reject(message: str | None, status_code: int, error: str | None) -> str:
+    """Map broker create error response to BROKER_REJECTED_* enum.
+
+    Skeleton implementation — Phase 0 P0-02 capture had no reject responses.
+    Concrete Korean message → enum mappings will be appended as supervised
+    Phase 6 captures surface real reject payloads (P0-03 backlog).
+    """
+    if error:
+        return BROKER_REJECTED_TIMEOUT
+    if status_code in (408, 504):
+        return BROKER_REJECTED_TIMEOUT
+    if status_code in (401, 403):
+        return BROKER_REJECTED_AUTH_REQUIRED
+    if status_code >= 500:
+        return BROKER_REJECTED_HTTP_ERROR
+    return BROKER_REJECTED_UNKNOWN
 SUMMARY_ENDPOINTS = [
     {
         "name": "account_overview",
@@ -2090,9 +2131,6 @@ class TossBridgeRuntime:
             "include_app_version": True,
             "body": create_payload,
         }
-        results = self._fetch_many([create_request])
-        context = self._make_context(results)
-        result = results[0]
 
         ordered_at = now_kst()
         base_ack = {
@@ -2103,32 +2141,72 @@ class TossBridgeRuntime:
             "order_type": order_type_label,
         }
 
-        if not result.get("ok"):
-            error = result.get("error") or {}
+        try:
+            results = self._fetch_many([create_request])
+        except RuntimeError as exc:
             return (
                 {
                     **base_ack,
                     "status": "broker_rejected",
-                    "code": "BROKER_REJECTED_UNKNOWN",
-                    "message": str(error.get("message") or "broker create request failed"),
+                    "code": BROKER_REJECTED_TIMEOUT,
+                    "message": str(exc),
                     "ordered_at": ordered_at,
-                    "http_status": result.get("status"),
+                    "http_status": 0,
+                },
+                self._make_context([]),
+            )
+
+        context = self._make_context(results)
+        result = results[0]
+        status_code = int(result.get("status_code") or 0)
+        body = result.get("json") or {}
+        broker_result = body.get("result") or {}
+
+        if not result.get("ok"):
+            fetch_error = result.get("error")
+            response_message = (
+                broker_result.get("message")
+                or body.get("message")
+                or fetch_error
+                or "broker create request failed"
+            )
+            code = classify_broker_reject(
+                message=str(response_message),
+                status_code=status_code,
+                error=fetch_error,
+            )
+            return (
+                {
+                    **base_ack,
+                    "status": "broker_rejected",
+                    "code": code,
+                    "message": str(response_message),
+                    "ordered_at": ordered_at,
+                    "http_status": status_code,
                 },
                 context,
             )
 
-        body = result.get("json") or {}
-        broker_result = body.get("result") or {}
         order_id = str(broker_result.get("orderId") or "").strip()
         if not order_id:
+            response_message = (
+                broker_result.get("message")
+                or body.get("message")
+                or "broker create response missing orderId"
+            )
+            code = classify_broker_reject(
+                message=str(response_message),
+                status_code=status_code,
+                error=None,
+            )
             return (
                 {
                     **base_ack,
                     "status": "broker_rejected",
-                    "code": "BROKER_REJECTED_UNKNOWN",
-                    "message": str(broker_result.get("message") or body.get("message") or "broker create response missing orderId"),
+                    "code": code,
+                    "message": str(response_message),
                     "ordered_at": ordered_at,
-                    "http_status": result.get("status"),
+                    "http_status": status_code,
                 },
                 context,
             )
@@ -2137,14 +2215,14 @@ class TossBridgeRuntime:
             {
                 **base_ack,
                 "status": "submitted",
-                "code": "OK",
+                "code": BROKER_ACK_OK,
                 "message": str(broker_result.get("message") or ""),
                 "broker_order_id": order_id,
                 "order_no": broker_result.get("orderNo"),
                 "order_date": broker_result.get("orderDate"),
                 "is_reserved": bool(broker_result.get("isReserved") or False),
                 "ordered_at": ordered_at,
-                "http_status": result.get("status"),
+                "http_status": status_code,
             },
             context,
         )
