@@ -91,16 +91,32 @@ def test_validate_place_order_params_requires_matching_confirm_text() -> None:
         )
 
 
-def test_validate_place_order_params_rejects_market_receipt() -> None:
+def test_validate_place_order_params_accepts_market_receipt() -> None:
     receipt = validate_order_preview_receipt(_receipt(order_type="market"))
 
-    with pytest.raises(Exception, match="limit preview receipts only"):
+    normalized = validate_place_order_params(
+        {
+            "preview_receipt": receipt,
+            "preview_fingerprint": receipt["preview_fingerprint"],
+            "confirm": True,
+            "confirm_text": "BUY 3 AAPL MARKET US",
+        }
+    )
+
+    assert normalized["preview_receipt"]["inputs"]["order_type"] == "market"
+    assert normalized["confirm_phrase"] == "BUY 3 AAPL MARKET US"
+
+
+def test_validate_place_order_params_rejects_unknown_order_type() -> None:
+    receipt = validate_order_preview_receipt(_receipt(order_type="stop"))
+
+    with pytest.raises(Exception, match="unsupported order_type"):
         validate_place_order_params(
             {
                 "preview_receipt": receipt,
                 "preview_fingerprint": receipt["preview_fingerprint"],
                 "confirm": True,
-                "confirm_text": "BUY 3 AAPL MARKET US",
+                "confirm_text": "BUY 3 AAPL STOP US",
             }
         )
 

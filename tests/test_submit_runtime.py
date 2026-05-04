@@ -190,6 +190,82 @@ def test_build_prepare_drift_issues_detects_price_change() -> None:
     ]
 
 
+def test_resolve_order_price_type_us_market_uses_limit_code_per_p0_02() -> None:
+    from toss_browser_bridge.submit import resolve_order_price_type
+
+    assert resolve_order_price_type("us", "limit") == "00"
+    assert resolve_order_price_type("us", "market") == "00"
+
+
+def test_resolve_order_price_type_kr_market_uses_placeholder_until_supervised() -> None:
+    from toss_browser_bridge.submit import resolve_order_price_type
+
+    assert resolve_order_price_type("kr", "limit") == "00"
+    assert resolve_order_price_type("kr", "market") == "03"
+
+
+def test_build_order_prepare_payload_us_market_uses_orderPriceType_00() -> None:
+    from toss_browser_bridge.preview import build_preview_fingerprint
+    from toss_browser_bridge.submit import build_order_preview_fingerprint_payload, build_order_preview_receipt
+
+    inputs = {
+        "market": "us",
+        "side": "sell",
+        "symbol": "NVDA",
+        "order_type": "market",
+        "quantity": 5,
+        "limit_price": 198.27,
+    }
+    submit_candidate = {
+        "market": "us",
+        "side": "sell",
+        "product_code": "US67066G1040",
+        "symbol": "NVDA",
+        "order_type": "market",
+        "quantity": 5,
+        "limit_price": 198.27,
+        "currency": "USD",
+        "estimated_total_amount": 991.35,
+    }
+    derived = {
+        "product_code": "US67066G1040",
+        "currency": "USD",
+        "estimated_unit_price": 198.27,
+        "estimated_total_amount": 991.35,
+        "orderable_cash": 1000.0,
+        "available_quantity": 5,
+        "market_status": "ACTIVE",
+    }
+    fingerprint = build_preview_fingerprint(
+        build_order_preview_fingerprint_payload(
+            account_id="toss:***1234",
+            inputs=inputs,
+            submit_candidate=submit_candidate,
+            derived=derived,
+        )
+    )
+    receipt = build_order_preview_receipt(
+        preview_id="pvw_market",
+        preview_fingerprint=fingerprint,
+        account_id="toss:***1234",
+        inputs=inputs,
+        submit_candidate=submit_candidate,
+        derived=derived,
+        verification_plan={"queries": ["completed_orders", "positions", "account_summary"]},
+    )
+
+    payload = build_order_prepare_payload(
+        receipt,
+        submit_market="NSQ",
+        currency_mode="USD",
+        allow_auto_exchange=False,
+    )
+
+    assert payload["orderPriceType"] == "00"
+    assert payload["price"] == 198.27
+    assert payload["quantity"] == 5
+
+
 def test_place_order_blocks_when_request_time_preview_fingerprint_drifts(tmp_path, monkeypatch) -> None:
     runtime = _runtime()
     monkeypatch.setattr(daemon_module, "MUTATION_JOURNAL_FILE", tmp_path / "mutation-journal.jsonl")

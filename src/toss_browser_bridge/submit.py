@@ -64,6 +64,16 @@ ORDER_PRICE_TYPE_CODES = {
     "limit": "00",
     "market": "03",
 }
+
+ORDER_TYPES_SUPPORTED = frozenset({"limit", "market"})
+
+# Per-market override for orderPriceType. Phase 0 P0-02 supervised capture
+# (toss web app, NVDA 5주 "시장가") confirmed that the US client maps
+# order_type="market" to API ``orderPriceType="00"`` and fills price with
+# the NBBO quote — i.e. the broker only ever sees a limit order on US.
+# KR market orders are unverified at this stage; the legacy "03" mapping
+# is preserved as a placeholder until Phase 6 supervised capture.
+US_MARKET_ORDER_PRICE_TYPE = "00"
 SUBMIT_MARKETS = {"KSP", "KSQ", "KR_ETC", "NYS", "NSQ", "AMX", "US_ETC"}
 SUBMIT_CURRENCY_MODES = {"KRW", "USD"}
 
@@ -257,10 +267,11 @@ def build_confirm_phrase_hash(confirm_phrase: str) -> str:
 
 def validate_place_order_params(params: dict[str, Any]) -> dict[str, Any]:
     receipt = validate_order_preview_receipt(params.get("preview_receipt"))
-    if receipt["inputs"].get("order_type") != "limit":
-        raise MutationValidationError("place-order currently supports limit preview receipts only")
-    if receipt["submit_candidate"].get("order_type") != "limit":
-        raise MutationValidationError("preview_receipt submit_candidate.order_type must be limit")
+    inputs_order_type = receipt["inputs"].get("order_type")
+    if inputs_order_type not in ORDER_TYPES_SUPPORTED:
+        raise MutationValidationError(f"unsupported order_type: {inputs_order_type}")
+    if receipt["submit_candidate"].get("order_type") != inputs_order_type:
+        raise MutationValidationError("preview_receipt submit_candidate.order_type must match inputs.order_type")
 
     preview_fingerprint = str(params.get("preview_fingerprint") or "").strip()
     if not preview_fingerprint:
@@ -396,6 +407,22 @@ def collect_enum_candidates(payload: Any, allowed_values: set[str]) -> list[str]
     return found
 
 
+def resolve_order_price_type(market_bucket: str, order_type: str) -> str:
+    """Map (market_bucket, order_type) to broker orderPriceType code.
+
+    P0-02 found that toss web app maps US market orders to
+    ``orderPriceType="00"`` (limit) at the API layer, with the client
+    filling the price field from the NBBO quote. KR market orders are
+    not yet verified — Phase 6 supervised capture will replace the
+    "03" placeholder if it diverges.
+    """
+    if order_type not in ORDER_PRICE_TYPE_CODES:
+        raise MutationValidationError(f"unsupported order_type for prepare payload: {order_type}")
+    if order_type == "market" and (market_bucket or "").lower() == "us":
+        return US_MARKET_ORDER_PRICE_TYPE
+    return ORDER_PRICE_TYPE_CODES[order_type]
+
+
 def build_order_prepare_payload(
     receipt: dict[str, Any],
     *,
@@ -407,13 +434,15 @@ def build_order_prepare_payload(
     inputs = validated["inputs"]
     submit_candidate = validated["submit_candidate"]
     order_type = str(inputs["order_type"])
-    order_price_type = ORDER_PRICE_TYPE_CODES.get(order_type)
-    if order_price_type is None:
-        raise MutationValidationError(f"unsupported order_type for prepare payload: {order_type}")
+    market_bucket = str(inputs.get("market") or "").lower()
+    order_price_type = resolve_order_price_type(market_bucket, order_type)
     quantity = int(inputs["quantity"])
     price = float(submit_candidate.get("limit_price") or 0)
     if price <= 0:
-        raise MutationValidationError("preview_receipt submit_candidate.limit_price must be positive")
+        raise MutationValidationError(
+            "preview_receipt submit_candidate.limit_price must be positive "
+            "(market orders use NBBO-quoted price; preview must populate it)"
+        )
     return {
         "stockCode": submit_candidate["product_code"],
         "tradeType": inputs["side"],
@@ -437,7 +466,10 @@ def build_prepare_drift_issues(
 ) -> list[dict[str, str]]:
     validated = validate_order_preview_receipt(receipt)
     inputs = validated["inputs"]
-    expected_order_price_type = ORDER_PRICE_TYPE_CODES[str(inputs["order_type"])]
+    expected_order_price_type = resolve_order_price_type(
+        str(inputs.get("market") or "").lower(),
+        str(inputs["order_type"]),
+    )
     issues: list[dict[str, str]] = []
 
     if str(prepared_order_info.get("tradeType") or "") != str(inputs["side"]):
