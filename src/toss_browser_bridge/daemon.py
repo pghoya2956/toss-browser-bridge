@@ -411,6 +411,7 @@ class TossBridgeRuntime:
         self._final_submit_enabled, self._final_submit_guard_reason = resolve_final_submit_state()
         self._verify_poll_attempts = 3
         self._verify_poll_delay_seconds = 1.0
+        self._capture_listeners: tuple[Any, Any, Any] | None = None
 
     def bind_server(self, server: HTTPServer) -> None:
         self._shutdown_server = server
@@ -479,7 +480,299 @@ class TossBridgeRuntime:
                 return self.place_order(params or {})
             if kind == "verify_order":
                 return self.verify_order(params or {})
+            if kind == "ui_buy_capture":
+                return self.ui_buy_capture(params or {})
+            if kind == "ui_arm_capture":
+                return self.ui_arm_capture(params or {})
+            if kind == "ui_disarm_capture":
+                return self.ui_disarm_capture()
             raise ValueError(f"unsupported kind: {kind}")
+
+    def ui_buy_capture(self, params: dict[str, Any]) -> dict[str, Any]:
+        """P6 진단용 임시 헬퍼 — 토스 web UI click 자동화 + 모든 토스 API request/response capture.
+
+        사용 시나리오: bridge 의 fetch 만으로 broker create 가 PIN 응답 받는 경우, UI click 흐름과 어떤 차이가 있는지 비교 capture.
+        진단 끝나면 제거 예정.
+
+        Params:
+            wait_seconds (default 5): listener 활성 시간. 사용자 click 동안 capture 하려면 30~60.
+            auto_click (default true): UI click 자동화 수행 여부. false 면 listener 만 등록 + wait.
+        """
+        product_code = str(params.get("product_code") or "US20111020005")
+        side = str(params.get("side") or "buy").lower()
+        quantity = int(params.get("quantity") or 1)
+        limit_price = float(params.get("limit_price") or 0)
+        wait_seconds = int(params.get("wait_seconds") or 5)
+        auto_click = bool(params.get("auto_click", True))
+        action_label = "구매" if side == "buy" else "판매"
+
+        page = self.ensure_page()
+        captured_requests: list[dict[str, Any]] = []
+        captured_responses: list[dict[str, Any]] = []
+
+        def on_request(request: Any) -> None:
+            try:
+                if "tossinvest.com/api/" in request.url:
+                    captured_requests.append({
+                        "method": request.method,
+                        "url": request.url,
+                        "post_data": request.post_data,
+                        "headers": dict(request.headers),
+                        "ts": now_kst(),
+                    })
+            except Exception:
+                pass
+
+        def on_response(response: Any) -> None:
+            try:
+                if "tossinvest.com/api/" in response.url:
+                    try:
+                        body_text = response.text()
+                    except Exception:
+                        body_text = None
+                    captured_responses.append({
+                        "url": response.url,
+                        "status": response.status,
+                        "method": response.request.method,
+                        "body": body_text,
+                        "ts": now_kst(),
+                    })
+            except Exception:
+                pass
+
+        page.on("request", on_request)
+        page.on("response", on_response)
+
+        steps_log: list[str] = []
+        error: str | None = None
+        try:
+            order_url = f"https://www.tossinvest.com/stocks/{product_code}/order"
+            if not page.url.startswith(order_url):
+                page.goto(order_url, wait_until="domcontentloaded")
+                steps_log.append(f"navigated to {order_url}")
+            else:
+                steps_log.append(f"already on {order_url}")
+            page.wait_for_timeout(2000)
+
+            if auto_click:
+                try:
+                    page.get_by_role("tab", name="일반주문").first.click(timeout=2000)
+                    steps_log.append("clicked 일반주문 tab")
+                except Exception as exc:
+                    steps_log.append(f"일반주문 tab skip: {exc}")
+                try:
+                    page.get_by_role("tab", name=action_label, exact=True).first.click(timeout=2000)
+                    steps_log.append(f"clicked {action_label} tab")
+                except Exception as exc:
+                    steps_log.append(f"{action_label} tab skip: {exc}")
+                try:
+                    price_inputs = page.locator('input[type="text"]').all()
+                    if price_inputs:
+                        price_inputs[0].fill(str(limit_price), timeout=2000)
+                        steps_log.append(f"filled price={limit_price}")
+                    if len(price_inputs) > 1:
+                        price_inputs[1].fill(str(quantity), timeout=2000)
+                        steps_log.append(f"filled qty={quantity}")
+                except Exception as exc:
+                    steps_log.append(f"input fill error: {exc}")
+                page.wait_for_timeout(500)
+                try:
+                    cta = page.get_by_role("button").filter(has_text=f"{action_label}하기").first
+                    cta.click(timeout=3000)
+                    steps_log.append(f"clicked {action_label}하기")
+                except Exception as exc:
+                    steps_log.append(f"{action_label}하기 click error: {exc}")
+                page.wait_for_timeout(1500)
+                try:
+                    dialog = page.get_by_role("dialog").first
+                    dialog_btn = dialog.get_by_role("button", name=action_label, exact=True).first
+                    dialog_btn.click(timeout=3000)
+                    steps_log.append(f"clicked dialog {action_label}")
+                except Exception as exc:
+                    steps_log.append(f"dialog {action_label} click error: {exc}")
+            else:
+                steps_log.append(f"auto_click=false — listener only, waiting {wait_seconds}s for user click")
+
+            page.wait_for_timeout(wait_seconds * 1000)
+        except Exception as exc:
+            error = str(exc)
+        finally:
+            try:
+                page.remove_listener("request", on_request)
+                page.remove_listener("response", on_response)
+            except Exception:
+                pass
+
+        return {
+            "ok": error is None,
+            "kind": "ui_buy_capture",
+            "source": "toss_browser_bridge",
+            "checked_at": now_kst(),
+            "data": {
+                "steps": steps_log,
+                "error": error,
+                "captured_requests": captured_requests,
+                "captured_responses": captured_responses,
+            },
+        }
+
+    def ui_arm_capture(self, params: dict[str, Any]) -> dict[str, Any]:
+        """P6 진단용 — UI capture listener 영구 활성. 응답 stream 을 file 에 append.
+
+        Context 레벨 listener — 모든 page (탭/popup 포함) 의 request/response 를 capture.
+        Page navigate / 새 tab / page close 무관하게 유지.
+
+        - 1회 호출로 listener 등록 + 즉시 return (wait 0)
+        - file path: `<runtime_dir>/ui-capture-stream.jsonl` (1줄 = 1 entry, JSON)
+        - 재호출 시 idempotent (이미 활성이면 already_armed=true)
+
+        Params:
+            stream_path (optional): override default file path
+            url_filter (optional, default 'tossinvest.com/api/'): substring filter
+        """
+        from pathlib import Path as _Path
+        runtime_dir = PROFILE_DIR.parent
+        stream_path = _Path(params.get("stream_path") or runtime_dir / "ui-capture-stream.jsonl")
+        stream_path.parent.mkdir(parents=True, exist_ok=True)
+        url_filter = str(params.get("url_filter") or "tossinvest.com/api/")
+
+        # ensure browser/context 살아있음
+        self.ensure_page()
+        assert self._context is not None
+        context = self._context
+
+        if self._capture_listeners is not None:
+            current_url = self._page.url if self._page is not None else None
+            return {
+                "ok": True,
+                "kind": "ui_arm_capture",
+                "source": SOURCE,
+                "checked_at": now_kst(),
+                "data": {
+                    "already_armed": True,
+                    "stream_path": str(stream_path),
+                    "url_filter": url_filter,
+                    "current_url": current_url,
+                    "pages_attached": len(context.pages),
+                },
+            }
+
+        def _append(entry: dict[str, Any]) -> None:
+            try:
+                with open(stream_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+
+        def on_request(request: Any) -> None:
+            try:
+                if url_filter not in request.url:
+                    return
+                _append({
+                    "ts": now_kst(),
+                    "kind": "request",
+                    "method": request.method,
+                    "url": request.url,
+                    "post_data": request.post_data,
+                    "headers": dict(request.headers),
+                })
+            except Exception:
+                pass
+
+        def on_response(response: Any) -> None:
+            try:
+                if url_filter not in response.url:
+                    return
+                try:
+                    body_text = response.text()
+                except Exception:
+                    body_text = None
+                _append({
+                    "ts": now_kst(),
+                    "kind": "response",
+                    "method": response.request.method,
+                    "url": response.url,
+                    "status": response.status,
+                    "body": body_text,
+                })
+            except Exception:
+                pass
+
+        def attach_to_page(page: Any) -> None:
+            try:
+                page.on("request", on_request)
+                page.on("response", on_response)
+                _append({
+                    "ts": now_kst(),
+                    "kind": "page_attached",
+                    "url": page.url,
+                })
+            except Exception:
+                pass
+
+        # 기존 page 들 모두 attach
+        for existing_page in list(context.pages):
+            attach_to_page(existing_page)
+
+        # 새 page 가 context 에 추가되면 자동 attach
+        def on_new_page(page: Any) -> None:
+            attach_to_page(page)
+
+        context.on("page", on_new_page)
+
+        self._capture_listeners = (on_request, on_response, on_new_page)
+
+        _append({
+            "ts": now_kst(),
+            "kind": "armed",
+            "url_filter": url_filter,
+            "pages_attached": len(context.pages),
+        })
+
+        return {
+            "ok": True,
+            "kind": "ui_arm_capture",
+            "source": SOURCE,
+            "checked_at": now_kst(),
+            "data": {
+                "already_armed": False,
+                "stream_path": str(stream_path),
+                "url_filter": url_filter,
+                "current_url": self._page.url if self._page is not None else None,
+                "pages_attached": len(context.pages),
+            },
+        }
+
+    def ui_disarm_capture(self) -> dict[str, Any]:
+        """P6 진단용 — UI capture listener 해제 (context 레벨)."""
+        if self._capture_listeners is None:
+            return {
+                "ok": True,
+                "kind": "ui_disarm_capture",
+                "source": SOURCE,
+                "checked_at": now_kst(),
+                "data": {"was_armed": False},
+            }
+        on_req, on_resp, on_new_page = self._capture_listeners
+        try:
+            if self._context is not None:
+                self._context.remove_listener("page", on_new_page)
+                for p in list(self._context.pages):
+                    try:
+                        p.remove_listener("request", on_req)
+                        p.remove_listener("response", on_resp)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        self._capture_listeners = None
+        return {
+            "ok": True,
+            "kind": "ui_disarm_capture",
+            "source": SOURCE,
+            "checked_at": now_kst(),
+            "data": {"was_armed": True},
+        }
 
     def open_login(self) -> dict[str, Any]:
         page = self.ensure_page()
@@ -2130,11 +2423,18 @@ class TossBridgeRuntime:
         normalized: dict[str, Any],
         preflight: dict[str, Any],
     ) -> tuple[dict[str, Any], QueryContext]:
-        """Call POST /api/v2/wts/trading/order/create after prepare preflight succeeded.
+        """Call POST /api/v2/wts/trading/order/create/direct after prepare preflight succeeded.
 
-        Endpoint URL/body schema captured in Phase 0 P0-02 (HAR diff against
-        simulation baseline). Body = prepare_payload minus the ``withOrderKey``
-        key; ``orderKey`` is tracked server-side via session cookie.
+        Endpoint URL/body schema captured in Phase 0 P0-02 (HAR) and re-validated in
+        Phase 6 P6-01 KRX UI capture (2026-05-05 14:17:30). Toss web UI consistently
+        uses the ``/create/direct`` variant — broker returns ``isReserved`` flag
+        based on market session state (true = reserved for next session, false =
+        immediate). The bare ``/create`` endpoint returned PIN keyboard responses
+        (BROKER_REJECTED_UNKNOWN) when called outside regular trading hours during
+        Phase 6 4-attempt diagnosis.
+
+        Body = prepare_payload minus the ``withOrderKey`` key; ``orderKey`` is
+        tracked server-side via session cookie.
         """
         prepare_payload = preflight["prepare_payload"]
         create_payload = {key: value for key, value in prepare_payload.items() if key != "withOrderKey"}
@@ -2149,8 +2449,8 @@ class TossBridgeRuntime:
         create_request = {
             "name": "order_create",
             "method": "POST",
-            "url": "https://wts-cert-api.tossinvest.com/api/v2/wts/trading/order/create",
-            "path": "/api/v2/wts/trading/order/create",
+            "url": "https://wts-cert-api.tossinvest.com/api/v2/wts/trading/order/create/direct",
+            "path": "/api/v2/wts/trading/order/create/direct",
             "headers": {"X-Tossinvest-Account": account_no},
             "include_app_version": True,
             "body": create_payload,
@@ -2185,6 +2485,21 @@ class TossBridgeRuntime:
         status_code = int(result.get("status_code") or 0)
         body = result.get("json") or {}
         broker_result = body.get("result") or {}
+        # DEBUG: P6 supervised broker create raw response capture (remove after diagnosis)
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            _debug_path = _Path.home() / "Library/Application Support/financier-v2/toss-bridge/broker-create-debug.log"
+            with open(_debug_path, "a", encoding="utf-8") as _f:
+                _f.write(_json.dumps({
+                    "ts": ordered_at,
+                    "request_body": create_payload,
+                    "status_code": status_code,
+                    "fetch_error": result.get("error"),
+                    "response_body": body,
+                }, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
         if not result.get("ok"):
             fetch_error = result.get("error")

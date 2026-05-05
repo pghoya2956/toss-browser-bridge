@@ -445,16 +445,19 @@ def build_order_prepare_payload(
         )
     return {
         "stockCode": submit_candidate["product_code"],
-        "tradeType": inputs["side"],
         "market": submit_market,
         "currencyMode": currency_mode,
+        "tradeType": inputs["side"],
         "price": price,
         "quantity": quantity,
+        "orderAmount": 0,
         "orderPriceType": order_price_type,
-        "withOrderKey": True,
-        "allowAutoExchange": allow_auto_exchange,
+        "agreedOver100Million": False,
         "marginTrading": False,
+        "max": False,
         "isReservationOrder": False,
+        "openPriceSinglePriceYn": False,
+        "withOrderKey": True,
     }
 
 
