@@ -130,6 +130,12 @@ def main() -> None:
     place_order.add_argument("--confirm", action="store_true")
     place_order.add_argument("--confirm-text", required=True)
     place_order.add_argument("--auto-verify", action="store_true")
+    place_order.add_argument(
+        "--reservation-mode",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="auto: omit (bridge default False) | on: isReservationOrder=true | off: isReservationOrder=false (explicit)",
+    )
     verify_order = sub.add_parser("verify-order")
     verify_order.add_argument("--mutation-id", required=True)
 
@@ -184,6 +190,11 @@ def main() -> None:
             "confirm_text": args.confirm_text,
             "auto_verify": args.auto_verify,
         }
+        if args.reservation_mode == "on":
+            params["is_reservation_order"] = True
+        elif args.reservation_mode == "off":
+            params["is_reservation_order"] = False
+        # "auto" → key omit → bridge default False
     elif args.command == "verify-order":
         params = {"mutation_id": args.mutation_id}
     payload = invoke(command_map[args.command], params=params)

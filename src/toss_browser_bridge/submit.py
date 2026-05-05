@@ -292,12 +292,24 @@ def validate_place_order_params(params: dict[str, Any]) -> dict[str, Any]:
 
     auto_verify = bool(params.get("auto_verify") or False)
 
+    is_reservation_order_raw = params.get("is_reservation_order")
+    if is_reservation_order_raw is None:
+        is_reservation_order: bool | None = None
+    elif isinstance(is_reservation_order_raw, bool):
+        is_reservation_order = is_reservation_order_raw
+    else:
+        raise MutationValidationError(
+            "is_reservation_order must be bool or None — "
+            "policy enums (auto/on/off) are converted in the wrapper layer"
+        )
+
     return {
         "preview_receipt": receipt,
         "preview_fingerprint": preview_fingerprint,
         "confirm_phrase": confirm_phrase,
         "confirm_phrase_hash": build_confirm_phrase_hash(confirm_phrase),
         "auto_verify": auto_verify,
+        "is_reservation_order": is_reservation_order,
     }
 
 
@@ -429,6 +441,7 @@ def build_order_prepare_payload(
     submit_market: str,
     currency_mode: str,
     allow_auto_exchange: bool,
+    is_reservation_order: bool | None = None,
 ) -> dict[str, Any]:
     validated = validate_order_preview_receipt(receipt)
     inputs = validated["inputs"]
@@ -443,18 +456,22 @@ def build_order_prepare_payload(
             "preview_receipt submit_candidate.limit_price must be positive "
             "(market orders use NBBO-quoted price; preview must populate it)"
         )
+    reservation_flag = False if is_reservation_order is None else bool(is_reservation_order)
     return {
         "stockCode": submit_candidate["product_code"],
-        "tradeType": inputs["side"],
         "market": submit_market,
         "currencyMode": currency_mode,
+        "tradeType": inputs["side"],
         "price": price,
         "quantity": quantity,
+        "orderAmount": 0,
         "orderPriceType": order_price_type,
-        "withOrderKey": True,
-        "allowAutoExchange": allow_auto_exchange,
+        "agreedOver100Million": False,
         "marginTrading": False,
-        "isReservationOrder": False,
+        "max": False,
+        "isReservationOrder": reservation_flag,
+        "openPriceSinglePriceYn": False,
+        "withOrderKey": True,
     }
 
 

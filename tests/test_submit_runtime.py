@@ -9,12 +9,14 @@ from toss_browser_bridge.daemon import TossBridgeRuntime
 from toss_browser_bridge.preview import build_preview_fingerprint
 from toss_browser_bridge.submit import (
     MutationDomainError,
+    MutationValidationError,
     append_mutation_journal,
     build_prepare_drift_issues,
     build_order_prepare_payload,
     build_order_preview_fingerprint_payload,
     build_order_preview_receipt,
     find_recent_mutation_by_id,
+    validate_place_order_params,
 )
 from toss_browser_bridge.daemon import classify_broker_reject
 
@@ -870,3 +872,85 @@ def test_place_order_auto_verify_attaches_verify_snapshot_when_submitted(tmp_pat
     assert len(verify_calls) == 1
     assert data["verification_state"] == "verified_success"
     assert data["verify_snapshot"]["matched_order"]["order_no"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 P1-07: payload pass-through (isReservationOrder) 회귀 + 신규 테스트
+# ---------------------------------------------------------------------------
+
+
+def _build_prepare_payload_with_flag(reservation: bool | None) -> dict[str, object]:
+    return build_order_prepare_payload(
+        _receipt(),
+        submit_market="NSQ",
+        currency_mode="USD",
+        allow_auto_exchange=False,
+        is_reservation_order=reservation,
+    )
+
+
+def test_build_order_prepare_payload_default_none_keeps_reservation_false() -> None:
+    payload = _build_prepare_payload_with_flag(None)
+    assert payload["isReservationOrder"] is False
+
+
+def test_build_order_prepare_payload_explicit_true_serializes_reservation_true() -> None:
+    payload = _build_prepare_payload_with_flag(True)
+    assert payload["isReservationOrder"] is True
+
+
+def test_build_order_prepare_payload_explicit_false_serializes_reservation_false() -> None:
+    payload = _build_prepare_payload_with_flag(False)
+    assert payload["isReservationOrder"] is False
+
+
+def _valid_place_params(extra: dict[str, object] | None = None) -> dict[str, object]:
+    receipt = _receipt()
+    base = {
+        "preview_receipt": receipt,
+        "preview_fingerprint": receipt["preview_fingerprint"],
+        "confirm": True,
+        "confirm_text": "BUY 1 AAPL LIMIT 200.00 US",
+    }
+    if extra:
+        base.update(extra)
+    return base
+
+
+def test_validate_place_order_params_omits_reservation_when_unset() -> None:
+    normalized = validate_place_order_params(_valid_place_params())
+    assert normalized["is_reservation_order"] is None
+
+
+def test_validate_place_order_params_passes_through_true() -> None:
+    normalized = validate_place_order_params(_valid_place_params({"is_reservation_order": True}))
+    assert normalized["is_reservation_order"] is True
+
+
+def test_validate_place_order_params_passes_through_false() -> None:
+    normalized = validate_place_order_params(_valid_place_params({"is_reservation_order": False}))
+    assert normalized["is_reservation_order"] is False
+
+
+def test_validate_place_order_params_rejects_string_enum() -> None:
+    with pytest.raises(MutationValidationError) as excinfo:
+        validate_place_order_params(_valid_place_params({"is_reservation_order": "on"}))
+    assert "is_reservation_order" in str(excinfo.value)
+
+
+def test_market_status_issue_n_classifies_as_review_not_normal() -> None:
+    issue = TossBridgeRuntime._market_status_issue("N")
+    assert issue is not None
+    assert issue["blocking"] is False
+    assert issue["code"] == "market_status_requires_review"
+
+
+def test_market_status_issue_active_returns_none() -> None:
+    assert TossBridgeRuntime._market_status_issue("ACTIVE") is None
+
+
+def test_market_status_issue_halt_blocks() -> None:
+    issue = TossBridgeRuntime._market_status_issue("HALT")
+    assert issue is not None
+    assert issue["blocking"] is True
+    assert issue["code"] == "market_not_tradeable"
