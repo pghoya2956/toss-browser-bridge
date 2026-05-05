@@ -2033,7 +2033,7 @@ class TossBridgeRuntime:
                 "code": "market_not_tradeable",
                 "message": f"market status {status} indicates trading is blocked",
             }
-        if normalized not in {"ACTIVE", "NORMAL", "OPEN", "TRADING", "N"}:
+        if normalized not in {"ACTIVE", "NORMAL", "OPEN", "TRADING"}:
             return {
                 "blocking": False,
                 "code": "market_status_requires_review",
@@ -2298,6 +2298,7 @@ class TossBridgeRuntime:
             submit_market=submit_market,
             currency_mode=currency_mode,
             allow_auto_exchange=allow_auto_exchange,
+            is_reservation_order=normalized.get("is_reservation_order"),
         )
         prepare_requests = [
             {
