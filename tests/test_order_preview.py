@@ -115,6 +115,8 @@ def test_order_preview_builds_buy_preview_response() -> None:
     assert payload["ok"] is True
     assert payload["data"]["preview_state"] == "preview_ready"
     assert payload["data"]["submit_candidate"]["estimated_total_amount"] == 421.0
+    assert payload["data"]["submit_candidate"]["limit_price"] == 210.5
+    assert payload["data"]["inputs"]["limit_price"] is None
     assert payload["data"]["warnings"][0]["code"] == "market_order_uses_last_price"
     assert payload["data"]["blocking_issues"] == []
     assert payload["data"]["preview_fingerprint"].startswith("sha256:")

@@ -303,6 +303,7 @@ def test_place_order_blocks_when_request_time_preview_fingerprint_drifts(tmp_pat
 
 
 def test_place_order_blocks_duplicate_preview_fingerprint(tmp_path, monkeypatch) -> None:
+    """submit_state='submitted' 의 동일 fingerprint 가 있으면 idempotency 차단."""
     runtime = _runtime()
     journal_path = tmp_path / "mutation-journal.jsonl"
     monkeypatch.setattr(daemon_module, "MUTATION_JOURNAL_FILE", journal_path)
@@ -315,11 +316,11 @@ def test_place_order_blocks_duplicate_preview_fingerprint(tmp_path, monkeypatch)
             "requested_at": "2026-04-17T15:10:00+09:00",
             "preview_fingerprint": receipt["preview_fingerprint"],
             "confirm_phrase_hash": "sha256:phrase",
-            "submit_state": "submit_blocked",
+            "submit_state": "submitted",
             "verification_state": "pending",
             "broker_ack": {
-                "status": "not_attempted",
-                "message": "already used",
+                "status": "ok",
+                "message": "broker accepted",
                 "market": "us",
                 "symbol": "AAPL",
                 "side": "buy",
@@ -343,6 +344,66 @@ def test_place_order_blocks_duplicate_preview_fingerprint(tmp_path, monkeypatch)
         )
 
     assert excinfo.value.code == "submit_blocked"
+
+
+def test_find_recent_mutation_skips_submit_blocked(tmp_path) -> None:
+    """submit_blocked entry 는 idempotency 매칭에서 제외 — broker create 0 + 실주문 0 이라 retry 안전."""
+    from toss_browser_bridge.submit import (
+        append_mutation_journal as _append,
+        find_recent_mutation_by_preview_fingerprint,
+    )
+
+    journal_path = tmp_path / "mutation-journal.jsonl"
+    fp = "sha256:fp_blocked_then_retry"
+    _append(
+        journal_path,
+        {
+            "mutation_id": "mut_blocked",
+            "kind": "place_order",
+            "requested_at": "2026-05-06T04:14:00+09:00",
+            "preview_fingerprint": fp,
+            "confirm_phrase_hash": "sha256:phrase",
+            "submit_state": "submit_blocked",
+            "verification_state": "pending",
+            "broker_ack": {
+                "status": "disabled_by_default",
+                "message": "TOSS_BRIDGE_ENABLE_FINAL_SUBMIT off",
+                "market": "us",
+                "symbol": "BOTZ",
+                "side": "sell",
+                "quantity": 38,
+                "order_type": "market",
+            },
+        },
+    )
+
+    assert find_recent_mutation_by_preview_fingerprint(journal_path, fp) is None
+
+    _append(
+        journal_path,
+        {
+            "mutation_id": "mut_submitted",
+            "kind": "place_order",
+            "requested_at": "2026-05-06T04:25:00+09:00",
+            "preview_fingerprint": fp,
+            "confirm_phrase_hash": "sha256:phrase",
+            "submit_state": "submitted",
+            "verification_state": "pending",
+            "broker_ack": {
+                "status": "ok",
+                "message": "broker accepted",
+                "market": "us",
+                "symbol": "BOTZ",
+                "side": "sell",
+                "quantity": 38,
+                "order_type": "market",
+            },
+        },
+    )
+
+    matched = find_recent_mutation_by_preview_fingerprint(journal_path, fp)
+    assert matched is not None
+    assert matched["submit_state"] == "submitted"
 
 
 def test_verify_order_requires_mutation_id() -> None:

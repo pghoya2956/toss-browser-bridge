@@ -1372,6 +1372,11 @@ class TossBridgeRuntime:
             "orderable_cash": orderable_cash,
             "available_quantity": available_quantity,
         }
+        submit_candidate_limit_price = (
+            normalized["limit_price"]
+            if normalized["order_type"] == "limit"
+            else estimated_unit_price
+        )
         submit_candidate = {
             "market": normalized["market"],
             "side": normalized["side"],
@@ -1379,7 +1384,7 @@ class TossBridgeRuntime:
             "symbol": quote_data["symbol"],
             "order_type": normalized["order_type"],
             "quantity": normalized["quantity"],
-            "limit_price": normalized["limit_price"],
+            "limit_price": submit_candidate_limit_price,
             "currency": currency,
             "estimated_total_amount": estimated_total_amount,
         }

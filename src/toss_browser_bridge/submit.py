@@ -369,6 +369,11 @@ def mutation_journal_line_preview(entry: dict[str, Any]) -> str:
 
 
 def find_recent_mutation_by_preview_fingerprint(path: Path, preview_fingerprint: str) -> dict[str, Any] | None:
+    """Idempotency 검사: 같은 preview_fingerprint 의 *실 broker 시도* 가 있는지 확인.
+
+    submit_state="submit_blocked" 는 broker create 호출 0 + 실주문 0 이므로 idempotency 무관.
+    재시도 안전 (예: TOSS_BRIDGE_ENABLE_FINAL_SUBMIT off→on 토글 후 동일 preview retry).
+    """
     if not path.exists():
         return None
     for raw_line in reversed(path.read_text(encoding="utf-8").splitlines()):
@@ -379,8 +384,11 @@ def find_recent_mutation_by_preview_fingerprint(path: Path, preview_fingerprint:
             entry = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if entry.get("preview_fingerprint") == preview_fingerprint:
-            return sanitize_mutation_journal_entry(entry)
+        if entry.get("preview_fingerprint") != preview_fingerprint:
+            continue
+        if entry.get("submit_state") == "submit_blocked":
+            continue
+        return sanitize_mutation_journal_entry(entry)
     return None
 
 
