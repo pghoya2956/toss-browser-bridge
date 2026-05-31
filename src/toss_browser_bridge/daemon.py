@@ -141,7 +141,7 @@ POSITIONS_ENDPOINT = {
     "method": "POST",
     "url": "https://wts-cert-api.tossinvest.com/api/v2/dashboard/asset/sections/all",
     "path": "/api/v2/dashboard/asset/sections/all",
-    "body": {},
+    "body": {"types": ["SORTED_OVERVIEW"]},
 }
 QUOTE_PROBE_ENDPOINT = {
     "name": "quote_probe",
@@ -311,7 +311,7 @@ def classify_health_payload(
     logged_out = is_logged_out(current_url)
     account_list_ok = _endpoint_ok(results, "account_list")
     overview_ok = _endpoint_ok(results, "account_overview")
-    positions_ok = _endpoint_ok(results, "asset_sections_v2")
+    positions_ok = _positions_endpoint_ready(results)
     completed_orders_ok = _endpoint_ok(results, "completed_orders_us_probe")
     quote_ok = _endpoint_ok(results, "quote_probe")
     fx_rate_ok = _endpoint_ok(results, "fx_rate_probe")
@@ -366,6 +366,15 @@ def classify_health_payload(
 
 def _endpoint_ok(results: list[dict[str, Any]], name: str) -> bool:
     return next((bool(item.get("ok")) for item in results if item.get("name") == name), False)
+
+
+def _positions_endpoint_ready(results: list[dict[str, Any]]) -> bool:
+    item = next((item for item in results if item.get("name") == "asset_sections_v2"), None)
+    if not item or not item.get("ok"):
+        return False
+    payload = item.get("json") or {}
+    sections = ((payload.get("result") or {}).get("sections")) or []
+    return any(section.get("type") == "SORTED_OVERVIEW" for section in sections)
 
 
 def is_logged_out(url: str | None) -> bool:

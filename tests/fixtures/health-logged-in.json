@@ -24,6 +24,18 @@
       "path": "/api/v2/dashboard/asset/sections/all",
       "status_code": 200,
       "ok": true,
+      "json": {
+        "result": {
+          "sections": [
+            {
+              "type": "SORTED_OVERVIEW",
+              "data": {
+                "products": []
+              }
+            }
+          ]
+        }
+      },
       "error": null
     },
     {
