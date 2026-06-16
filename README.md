@@ -69,6 +69,19 @@ sh scripts/scrub-check.sh
 
 기존 `financier-v2` 내장 bridge와 같은 머신에서 함께 돌릴 때는 포트를 분리해야 한다.
 
+### Chrome 리소스 절감 (opt-in)
+
+데이터는 페이지 안 `fetch(credentials:include)`로 가져오고 브라우저는 로그인 세션 + 요청 서명 호스트 역할만 한다. 따라서 렌더링(GPU·이미지)은 순수 오버헤드이며 다음 토글로 끌 수 있다. **둘 다 미설정이 기본이며 현행 동작(headed)과 동일하다.**
+
+| 환경변수 | 기본 | 동작 |
+|----------|------|------|
+| `TOSS_BRIDGE_HEADLESS` | off | `on`이면 headless로 기동(창 없음). Chrome RSS 대폭 절감 |
+| `TOSS_BRIDGE_LEAN` | off | `on`이면 GPU·이미지 디코드 비활성 등 경량 플래그 적용 |
+
+값은 `1/true/yes/on`이 활성, 그 외(`off`/오타/미설정)는 전부 비활성으로 안전하게 처리된다.
+
+headless는 화면이 없어 **최초 로그인·세션 갱신(인증서/2FA) UI를 띄울 수 없다.** 운용 모델은 *headed로 한 번 로그인 → 세션이 chrome-profile에 잔존 → `TOSS_BRIDGE_HEADLESS=on`으로 재기동*이다. 세션 만료 시 `health`가 `attached_but_logged_out`을 반환하므로, headed로 재기동해 재로그인한다. 토스 anti-automation 차단 가능성이 있어 조회 경로부터 검증 후 주문에 적용하기를 권장한다.
+
 ## 예시 출력
 
 - logged out capability matrix: [examples/health-attached-but-logged-out.json](examples/health-attached-but-logged-out.json)

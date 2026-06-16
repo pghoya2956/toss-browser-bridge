@@ -4,7 +4,7 @@
 
 | Task | Started | Current Phase | Status |
 |------|---------|---------------|--------|
-| — | — | — | — |
+| [bridge-headless-lean](20260617-bridge-headless-lean/spec/initial.md) | 2026-06-17 | Phase 1 완료 | ◐ 코드+단위테스트 머지 대기. Phase 2(headless 조회 실측+RSS)는 토스 로그인 필요 |
 
 ## 보류
 
