@@ -4,7 +4,7 @@
 
 | Task | Started | Current Phase | Status |
 |------|---------|---------------|--------|
-| [bridge-headless-lean](20260617-bridge-headless-lean/spec/initial.md) | 2026-06-17 | Phase 1 완료 | ◐ 코드+단위테스트 머지 대기. Phase 2(headless 조회 실측+RSS)는 토스 로그인 필요 |
+| — | — | — | — |
 
 ## 보류
 
@@ -16,5 +16,6 @@
 
 | Task | Period | Result |
 |------|--------|--------|
+| [bridge-headless-lean](20260617-bridge-headless-lean/spec/initial.md) | 2026-06-17~2026-06-17 | ● headless+lean env 토글, RSS 6917→1063MB(~85%↓) 실측 통과, v0.4.2 릴리즈 |
 | [guarded-order-submit](20260417-guarded-order-submit/task_plan.md) | 2026-04-17~2026-04-17 | ● safety groundwork complete, final create still closed |
 | [write-path-preview](20260417-write-path-preview/task_plan.md) | 2026-04-17~2026-04-17 | ● |
