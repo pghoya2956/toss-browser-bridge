@@ -59,6 +59,22 @@ ACCOUNT_URL = "https://www.tossinvest.com/account"
 KST = ZoneInfo("Asia/Seoul")
 FINAL_SUBMIT_ENABLE_ENV = "TOSS_BRIDGE_ENABLE_FINAL_SUBMIT"
 FINAL_SUBMIT_TEST_BYPASS_ENV = "TOSS_BRIDGE_ALLOW_TEST_FINAL_SUBMIT"
+HEADLESS_ENV = "TOSS_BRIDGE_HEADLESS"
+LEAN_ENV = "TOSS_BRIDGE_LEAN"
+
+# Chrome 렌더링 리소스 절감 플래그. 데이터는 in-page fetch(credentials:include)로
+# 가져오고 브라우저는 세션 + App-Version 서명 호스트 역할만 하므로(이미지/GPU 불필요)
+# 이미지 디코드·GPU 컴포지터를 꺼도 조회/주문 동작에 영향이 없다.
+LEAN_CHROME_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--blink-settings=imagesEnabled=false",
+    "--disable-dev-shm-usage",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--mute-audio",
+    "--js-flags=--max-old-space-size=512",
+]
 
 
 def _resolve_bridge_version() -> str:
@@ -387,6 +403,26 @@ def _env_flag(name: str) -> bool:
     return str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def resolve_browser_launch_options() -> dict:
+    """env 토글을 읽어 launch_persistent_context kwargs를 만든다.
+
+    토글 미설정 시 현행과 동일한 인자를 반환한다(회귀 0):
+        {channel:"chrome", headless:False, viewport:{1440,960}, args:["--window-size=1440,960"]}
+
+    - TOSS_BRIDGE_HEADLESS=on → headless=True (Playwright 신형 headless)
+    - TOSS_BRIDGE_LEAN=on → 경량 Chrome 플래그(LEAN_CHROME_ARGS) 추가
+    """
+    args = ["--window-size=1440,960"]
+    if _env_flag(LEAN_ENV):
+        args = args + LEAN_CHROME_ARGS
+    return {
+        "channel": "chrome",
+        "headless": _env_flag(HEADLESS_ENV),
+        "viewport": {"width": 1440, "height": 960},
+        "args": args,
+    }
+
+
 def resolve_final_submit_state() -> tuple[bool, str]:
     requested = _env_flag(FINAL_SUBMIT_ENABLE_ENV)
     under_pytest = bool(os.environ.get("PYTEST_CURRENT_TEST"))
@@ -433,10 +469,7 @@ class TossBridgeRuntime:
             self._playwright = sync_playwright().start()
             self._context = self._playwright.chromium.launch_persistent_context(
                 str(PROFILE_DIR),
-                channel="chrome",
-                headless=False,
-                viewport={"width": 1440, "height": 960},
-                args=["--window-size=1440,960"],
+                **resolve_browser_launch_options(),
             )
             if self._context.pages:
                 self._page = self._context.pages[0]
